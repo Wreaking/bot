@@ -1,0 +1,51 @@
+const { EmbedBuilder } = require('discord.js');
+
+module.exports = {
+    name: 'help',
+    description: 'Shows the list of commands',
+    execute: async (message, args) => {
+        try {
+            const embed = new EmbedBuilder()
+                .setColor('#FFD700')
+                .setTitle('📖 Command List')
+                .setDescription('Here are all the available commands:')
+                .addFields(
+                    {
+                        name: '🎮 General',
+                        value: '`v!help` - Show this help message',
+                        inline: false
+                    },
+                    {
+                        name: '🗺️ Treasure Hunt',
+                        value: '`v!hunt` - Start a treasure hunt\n`v!solve <answer>` - Submit your answer for a clue',
+                        inline: false
+                    },
+                    {
+                        name: '💰 Economy',
+                        value: [
+                            '`v!daily` - Claim your daily reward',
+                            '`v!work` - Work to earn coins',
+                            '`v!shop` - View available items',
+                            '`v!buy <item_id>` - Purchase an item',
+                            '`v!profile` - View your profile'
+                        ].join('\n'),
+                        inline: false
+                    }
+                )
+                .setFooter({ 
+                    text: 'Use v! before each command', 
+                    iconURL: message.client.user.displayAvatarURL()
+                });
+
+            await message.reply({ embeds: [embed] });
+        } catch (error) {
+            console.error('Help command error:', error);
+            const errorEmbed = new EmbedBuilder()
+                .setColor('#FF5555')
+                .setTitle('❌ Error')
+                .setDescription('There was an error displaying the help message. Please try again later.')
+                .setFooter({ text: 'Contact support if the issue persists' });
+            await message.reply({ embeds: [errorEmbed] });
+        }
+    }
+};

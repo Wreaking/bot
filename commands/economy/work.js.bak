@@ -1,0 +1,113 @@
+const { EmbedBuilder } = require('discord.js');
+const db = require('../../database');
+
+// 1 hour cooldown
+const WORK_COOLDOWN = 60 * 60 * 1000;
+const MIN_REWARD = 50;
+const MAX_REWARD = 200;
+
+// Work scenarios for more interesting responses
+const workScenarios = [
+    {
+        job: "Treasure Map Maker",
+        descriptions: [
+            "You carefully drew detailed treasure maps",
+            "You updated old maps with new landmarks",
+            "You restored some ancient treasure maps"
+        ]
+    },
+    {
+        job: "Equipment Merchant",
+        descriptions: [
+            "You sold adventure gear to new explorers",
+            "You polished and displayed rare artifacts",
+            "You appraised mysterious items"
+        ]
+    },
+    {
+        job: "Guild Assistant",
+        descriptions: [
+            "You organized quest boards for adventurers",
+            "You helped coordinate treasure hunting parties",
+            "You cataloged newly discovered treasures"
+        ]
+    },
+    {
+        job: "Dungeon Guide",
+        descriptions: [
+            "You led a tour through safe dungeon routes",
+            "You marked safe paths through dangerous areas",
+            "You helped new adventurers train safely"
+        ]
+    }
+];
+
+module.exports = {
+    name: 'work',
+    description: 'Work to earn coins',
+    execute: async (message, args) => {
+        try {
+            // Get user data
+            let userData = await db.getUser(message.author.id);
+            if (!userData) {
+                userData = {
+                    inventory: {
+                        coins: 100,
+                        xp: 0,
+                        items: []
+                    },
+                    lastWork: 0
+                };
+            }
+
+            const now = Date.now();
+            const lastWork = userData.lastWork || 0;
+            const timeDiff = now - lastWork;
+
+            // Check cooldown
+            if (timeDiff < WORK_COOLDOWN) {
+                const remaining = WORK_COOLDOWN - timeDiff;
+                const minutes = Math.ceil(remaining / (60 * 1000));
+
+                const embed = new EmbedBuilder()
+                    .setColor('#FF0000')
+                    .setTitle('❌ Still On Break')
+                    .setDescription(`You need to rest for ${minutes} more minutes before working again!`)
+                    .setFooter({ text: 'Work cooldown: 1 hour' });
+
+                return message.reply({ embeds: [embed] });
+            }
+
+            // Calculate rewards
+            const coins = Math.floor(Math.random() * (MAX_REWARD - MIN_REWARD + 1)) + MIN_REWARD;
+            const xp = Math.floor(coins / 4); // XP is 1/4 of coins earned
+
+            // Pick random scenario
+            const scenario = workScenarios[Math.floor(Math.random() * workScenarios.length)];
+            const description = scenario.descriptions[Math.floor(Math.random() * scenario.descriptions.length)];
+
+            // Update user data
+            userData.inventory.coins = (userData.inventory.coins || 0) + coins;
+            userData.inventory.xp = (userData.inventory.xp || 0) + xp;
+            userData.lastWork = now;
+
+            await db.setUser(message.author.id, userData);
+
+            const embed = new EmbedBuilder()
+                .setColor('#00FF00')
+                .setTitle(`💼 ${scenario.job}`)
+                .setDescription(description)
+                .addFields(
+                    { name: '💰 Earned', value: `${coins} coins`, inline: true },
+                    { name: '✨ XP Gained', value: `${xp} XP`, inline: true },
+                    { name: '💼 Total Balance', value: `${userData.inventory.coins} coins`, inline: false }
+                )
+                .setFooter({ text: 'You can work again in 1 hour' });
+
+            return message.reply({ embeds: [embed] });
+        } catch (error) {
+            console.error('Work command error:', error);
+            return message.reply('There was an error while working. Please try again.');
+        }
+    }
+};

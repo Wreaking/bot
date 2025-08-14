@@ -1,0 +1,85 @@
+const { EmbedBuilder } = require('discord.js');
+const db = require('../../database');
+const { ItemManager } = require('../../game/Items');
+const Player = require('../../game/Player');
+
+const itemManager = new ItemManager();
+
+module.exports = {
+    name: 'inventory',
+    description: 'View your inventory',
+    execute: async (message, args) => {
+        try {
+            // Get user data
+            const userData = await db.getUser(message.author.id);
+            if (!userData) {
+                return message.reply('You don\'t have any items yet! Check `v!shop` to buy some.');
+            }
+
+            const player = new Player(message.author.id, userData);
+
+            const embed = new EmbedBuilder()
+                .setColor('#FFD700')
+                .setTitle('🎒 Your Inventory')
+                .setDescription('Here are all your items:')
+                .addFields(
+                    { 
+                        name: '💰 Coins', 
+                        value: `${player.inventory.coins}`, 
+                        inline: true 
+                    },
+                    { 
+                        name: '✨ XP', 
+                        value: `${player.inventory.xp}`, 
+                        inline: true 
+                    }
+                );
+
+            // Group items by type
+            const itemsByType = {};
+            for (const item of player.inventory.items) {
+                const itemData = itemManager.getItem(item.id);
+                if (!itemData) continue;
+                
+                if (!itemsByType[itemData.type]) {
+                    itemsByType[itemData.type] = [];
+                }
+                itemsByType[itemData.type].push(itemData);
+            }
+
+            // Add items by type
+            for (const [type, items] of Object.entries(itemsByType)) {
+                if (items.length > 0) {
+                    embed.addFields({
+                        name: `📦 ${type.charAt(0).toUpperCase() + type.slice(1)}s`,
+                        value: items.map(item => {
+                            const count = player.inventory.items.filter(i => i.id === item.id).length;
+                            return `${item.name} (${count}x)`;
+                        }).join('\n'),
+                        inline: false
+                    });
+                }
+            }
+
+            // Add equipment section
+            const equipmentList = Object.entries(player.equipment)
+                .map(([slot, itemId]) => {
+                    if (!itemId) return `${slot}: None`;
+                    const item = itemManager.getItem(itemId);
+                    return `${slot}: ${item ? item.name : 'Unknown'}`;
+                })
+                .join('\n');
+
+            embed.addFields({
+                name: '⚔️ Equipment',
+                value: equipmentList || 'No equipment',
+                inline: false
+            });
+
+            return message.reply({ embeds: [embed] });
+        } catch (error) {
+            console.error('Inventory command error:', error);
+            return message.reply('There was an error displaying your inventory. Please try again.');
+        }
+    }
+};

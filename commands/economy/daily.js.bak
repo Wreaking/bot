@@ -1,0 +1,85 @@
+const { EmbedBuilder } = require('discord.js');
+const db = require('../../database');
+
+// 24 hours in milliseconds
+const DAILY_COOLDOWN = 24 * 60 * 60 * 1000;
+const DAILY_AMOUNT = 500;
+const STREAK_BONUS = 100;
+
+module.exports = {
+    name: 'daily',
+    description: 'Collect your daily reward',
+    execute: async (message, args) => {
+        try {
+            // Get user data
+            let userData = await db.getUser(message.author.id);
+            if (!userData) {
+                userData = {
+                    inventory: {
+                        coins: 100,
+                        xp: 0,
+                        items: []
+                    },
+                    lastDaily: 0,
+                    dailyStreak: 0
+                };
+            }
+
+            const now = Date.now();
+            const lastDaily = userData.lastDaily || 0;
+            const timeDiff = now - lastDaily;
+
+            // Check if enough time has passed
+            if (timeDiff < DAILY_COOLDOWN) {
+                const remaining = DAILY_COOLDOWN - timeDiff;
+                const hours = Math.floor(remaining / (60 * 60 * 1000));
+                const minutes = Math.floor((remaining % (60 * 60 * 1000)) / (60 * 1000));
+
+                const embed = new EmbedBuilder()
+                    .setColor('#FF0000')
+                    .setTitle('❌ Daily Reward Not Ready')
+                    .setDescription(`You need to wait ${hours}h ${minutes}m before claiming again!`)
+                    .setFooter({ text: 'Daily rewards reset every 24 hours' });
+
+                return message.reply({ embeds: [embed] });
+            }
+
+            // Calculate streak
+            let streak = userData.dailyStreak || 0;
+            if (timeDiff < DAILY_COOLDOWN * 2) { // Less than 48 hours since last claim
+                streak++;
+            } else {
+                streak = 1; // Reset streak if more than 48 hours
+            }
+
+            // Calculate reward
+            const streakBonus = (streak - 1) * STREAK_BONUS;
+            const totalReward = DAILY_AMOUNT + streakBonus;
+
+            // Update user data
+            userData.inventory.coins = (userData.inventory.coins || 0) + totalReward;
+            userData.inventory.xp = (userData.inventory.xp || 0) + 50;
+            userData.lastDaily = now;
+            userData.dailyStreak = streak;
+
+            await db.setUser(message.author.id, userData);
+
+            const embed = new EmbedBuilder()
+                .setColor('#00FF00')
+                .setTitle('✅ Daily Reward Collected!')
+                .setDescription(`You received your daily reward!`)
+                .addFields(
+                    { name: '💰 Base Reward', value: `${DAILY_AMOUNT} coins`, inline: true },
+                    { name: '🔥 Streak', value: `${streak} days`, inline: true },
+                    { name: '⭐ Streak Bonus', value: `${streakBonus} coins`, inline: true },
+                    { name: '📊 Total', value: `${totalReward} coins + 50 XP`, inline: false }
+                )
+                .setFooter({ text: 'Come back tomorrow for another reward!' });
+
+            return message.reply({ embeds: [embed] });
+        } catch (error) {
+            console.error('Daily command error:', error);
+            return message.reply('There was an error with the daily reward. Please try again.');
+        }
+    }
+};

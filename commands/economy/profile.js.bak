@@ -1,0 +1,95 @@
+const { EmbedBuilder } = require('discord.js');
+const db = require('../../database');
+const Player = require('../../game/Player');
+
+module.exports = {
+    name: 'profile',
+    description: 'View your or another user\'s profile',
+    execute: async (message, args) => {
+        try {
+            // Check if a user was mentioned
+            const target = message.mentions.users.first() || message.author;
+            
+            // Get user data
+            let userData = await db.getUser(target.id);
+            if (!userData) {
+                if (target.id === message.author.id) {
+                    // Create new profile for command user
+                    userData = {
+                        inventory: {
+                            coins: 100,
+                            xp: 0,
+                            items: []
+                        },
+                        stats: {
+                            level: 1,
+                            huntsCompleted: 0,
+                            treasuresFound: 0
+                        },
+                        joinDate: Date.now()
+                    };
+                    await db.setUser(target.id, userData);
+                } else {
+                    return message.reply('This user doesn\'t have a profile yet!');
+                }
+            }
+
+            const player = new Player(target.id, userData);
+            const joinDate = new Date(userData.joinDate || Date.now()).toLocaleDateString();
+            
+            // Calculate time played
+            const timePlayed = Math.floor((Date.now() - (userData.joinDate || Date.now())) / (1000 * 60 * 60 * 24));
+
+            const embed = new EmbedBuilder()
+                .setColor('#FFD700')
+                .setTitle(`${target.username}'s Profile`)
+                .setThumbnail(target.displayAvatarURL())
+                .addFields(
+                    { 
+                        name: '📊 Stats', 
+                        value: Object.entries(player.stats)
+                            .map(([stat, value]) => `${stat}: ${value}`)
+                            .join('\n'),
+                        inline: true 
+                    },
+                    { 
+                        name: '💰 Economy', 
+                        value: [
+                            `Coins: ${player.inventory.coins}`,
+                            `XP: ${player.inventory.xp}`,
+                            `Items: ${player.inventory.items.length}`
+                        ].join('\n'),
+                        inline: true 
+                    },
+                    {
+                        name: '🏆 Achievements',
+                        value: [
+                            `Hunts Completed: ${userData.stats?.huntsCompleted || 0}`,
+                            `Treasures Found: ${userData.stats?.treasuresFound || 0}`
+                        ].join('\n'),
+                        inline: true
+                    },
+                    {
+                        name: '⚔️ Equipment',
+                        value: Object.entries(player.equipment)
+                            .map(([slot, itemId]) => {
+                                if (!itemId) return `${slot}: None`;
+                                const itemManager = new ItemManager();
+                                const item = itemManager.getItem(itemId);
+                                return `${slot}: ${item ? item.name : 'Unknown'}`;
+                            })
+                            .join('\n'),
+                        inline: false
+                    }
+                )
+                .setFooter({ 
+                    text: `Joined: ${joinDate} • Days Active: ${timePlayed}`
+                });
+
+            return message.reply({ embeds: [embed] });
+        } catch (error) {
+            console.error('Profile command error:', error);
+            return message.reply('There was an error displaying the profile. Please try again.');
+        }
+    }
+};

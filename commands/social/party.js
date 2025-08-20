@@ -243,34 +243,3 @@ module.exports = {
         }
     },
 };
-                            { name: '⚔️ Combat', value: 'combat' },
-                            { name: '🗺️ Exploration', value: 'exploration' },
-                            { name: '🏰 Dungeon', value: 'dungeon' },
-                            { name: '🎯 Quest', value: 'quest' }
-                        ))
-                .addIntegerOption(option =>
-                    option.setName('size')
-                        .setDescription('Maximum party size')
-                        .setRequired(true)))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('invite')
-                .setDescription('Invite a player to your party')
-                .addUserOption(option =>
-                    option.setName('player')
-                        .setDescription('Player to invite')
-                        .setRequired(true)))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('list')
-                .setDescription('List active parties looking for members'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('leave')
-                .setDescription('Leave your current party')),
-
-    async execute(interaction) {
-        // Command logic will go here
-        await interaction.reply('Party system coming soon!');
-    },
-};

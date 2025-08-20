@@ -1,429 +1,462 @@
-const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const config = require('../../config');
 
-const shopItems = {
-    tools: [
-        { id: 'compass', name: 'Magic Compass', price: 500, description: 'Reduces hunt time by 20%', emoji: '🧭' },
-        { id: 'shovel', name: 'Golden Shovel', price: 1000, description: 'Increases treasure rewards by 15%', emoji: '⛏️' },
-        { id: 'map', name: 'Ancient Map', price: 2000, description: 'Reveals hint for free once per day', emoji: '🗺️' },
-        { id: 'key', name: 'Master Key', price: 3000, description: 'Skip any riddle without penalty', emoji: '🗝️' }
-    ],
-    weapons: [
-        { id: 'sword', name: 'Iron Sword', price: 800, description: '+10 Attack Power', emoji: '⚔️' },
-        { id: 'axe', name: 'Battle Axe', price: 1200, description: '+15 Attack Power', emoji: '🪓' },
-        { id: 'staff', name: 'Magic Staff', price: 1500, description: '+20 Magic Power', emoji: '🔮' },
-        { id: 'bow', name: 'Elven Bow', price: 1000, description: '+12 Ranged Power', emoji: '🏹' }
-    ],
-    armor: [
-        { id: 'helmet', name: 'Steel Helmet', price: 600, description: '+8 Defense', emoji: '⛑️' },
-        { id: 'chestplate', name: 'Iron Chestplate', price: 1500, description: '+20 Defense', emoji: '🛡️' },
-        { id: 'boots', name: 'Swift Boots', price: 400, description: '+5 Speed', emoji: '👢' },
-        { id: 'cape', name: 'Mystic Cape', price: 2500, description: '+25 Magic Defense', emoji: '🧥' }
-    ],
-    potions: [
-        { id: 'health', name: 'Health Potion', price: 50, description: 'Restores 50 HP', emoji: '🧪' },
-        { id: 'mana', name: 'Mana Potion', price: 75, description: 'Restores 30 MP', emoji: '💙' },
-        { id: 'luck', name: 'Luck Potion', price: 200, description: 'Double rewards for 1 hour', emoji: '🍀' },
-        { id: 'strength', name: 'Strength Potion', price: 150, description: '+50% damage for 30 min', emoji: '💪' }
-    ],
-    pets: [
-        { id: 'wolf', name: 'Loyal Wolf', price: 5000, description: 'Companion that finds extra coins', emoji: '🐺' },
-        { id: 'dragon', name: 'Baby Dragon', price: 10000, description: 'Powerful companion for battles', emoji: '🐉' },
-        { id: 'phoenix', name: 'Phoenix Chick', price: 15000, description: 'Revives you once per day', emoji: '🔥' },
-        { id: 'unicorn', name: 'Unicorn', price: 20000, description: 'Magical companion with healing', emoji: '🦄' }
-    ]
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require('discord.js');
+const config = require('../../config.js');
+const { db } = require('../../database.js');
+const { ItemManager, EquipmentType } = require('../../game/Items.js');
+
+const SHOP_CATEGORIES = {
+    weapons: { name: '⚔️ Weapons', emoji: '⚔️' },
+    armor: { name: '🛡️ Armor', emoji: '🛡️' },
+    accessories: { name: '💍 Accessories', emoji: '💍' },
+    tools: { name: '🔧 Tools', emoji: '🔧' },
+    consumables: { name: '🧪 Consumables', emoji: '🧪' },
+    materials: { name: '🔨 Materials', emoji: '🔨' },
+    special: { name: '⭐ Special Items', emoji: '⭐' }
 };
-
-const { updateUserData, getUserData } = require('../../database');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('shop')
-        .setDescription('🛒 Browse and purchase items from the treasure shop!')
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('browse')
-                .setDescription('Browse items in the shop')
-                .addStringOption(option =>
-                    option.setName('category')
-                        .setDescription('Browse specific item category')
-                        .setRequired(false)
-                        .addChoices(
-                            { name: '🔧 Tools & Utilities', value: 'tools' },
-                            { name: '⚔️ Weapons', value: 'weapons' },
-                            { name: '🛡️ Armor & Defense', value: 'armor' },
-                            { name: '🧪 Potions & Consumables', value: 'potions' },
-                            { name: '🐾 Pets & Companions', value: 'pets' }
-                        )))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('buy')
-                .setDescription('Purchase an item')
-                .addStringOption(option =>
-                    option.setName('item')
-                        .setDescription('Item to purchase')
-                        .setRequired(true)
-                        .setAutocomplete(true))
-                .addIntegerOption(option =>
-                    option.setName('quantity')
-                        .setDescription('Quantity to purchase')
-                        .setRequired(false)
-                        .setMinValue(1)
-                        .setMaxValue(100)))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('sell')
-                .setDescription('Sell an item from your inventory')
-                .addStringOption(option =>
-                    option.setName('item')
-                        .setDescription('Item to sell')
-                        .setRequired(true)
-                        .setAutocomplete(true))
-                .addIntegerOption(option =>
-                    option.setName('quantity')
-                        .setDescription('Quantity to sell')
-                        .setRequired(false)
-                        .setMinValue(1)
-                        .setMaxValue(100))),
+        .setDescription('🛒 Browse and purchase items from the treasure hunter shop!')
+        .addStringOption(option =>
+            option.setName('category')
+                .setDescription('Browse specific item category')
+                .setRequired(false)
+                .addChoices(
+                    { name: '⚔️ Weapons', value: 'weapons' },
+                    { name: '🛡️ Armor', value: 'armor' },
+                    { name: '💍 Accessories', value: 'accessories' },
+                    { name: '🔧 Tools', value: 'tools' },
+                    { name: '🧪 Consumables', value: 'consumables' },
+                    { name: '🔨 Materials', value: 'materials' },
+                    { name: '⭐ Special Items', value: 'special' }
+                ))
+        .addStringOption(option =>
+            option.setName('item')
+                .setDescription('Buy specific item directly')
+                .setRequired(false)
+                .setAutocomplete(true))
+        .addIntegerOption(option =>
+            option.setName('quantity')
+                .setDescription('Number of items to buy')
+                .setRequired(false)
+                .setMinValue(1)
+                .setMaxValue(50)),
 
     async execute(interaction) {
-        try {
-            await interaction.deferReply();
+        const category = interaction.options?.getString('category');
+        const itemName = interaction.options?.getString('item');
+        const quantity = interaction.options?.getInteger('quantity') || 1;
 
-            const userData = await getUserData(interaction.user.id);
-            if (!userData) {
-                await interaction.editReply('❌ Please create a profile first using `/profile create`!');
-                return;
-            }
-
-            const subcommand = interaction.options.getSubcommand();
-            switch (subcommand) {
-                case 'browse': {
-                    const category = interaction.options.getString('category');
-                    if (category) {
-                        await this.showCategory(interaction, category, userData);
-                    } else {
-                        await this.showMainShop(interaction, userData);
-                    }
-                    break;
-                }
-                case 'buy': {
-                    const item = interaction.options.getString('item');
-                    const quantity = interaction.options.getInteger('quantity') || 1;
-                    await this.handlePurchase(interaction, item, quantity, userData);
-                    break;
-                }
-                case 'sell': {
-                    const item = interaction.options.getString('item');
-                    const quantity = interaction.options.getInteger('quantity') || 1;
-                    await this.handleSale(interaction, item, quantity, userData);
-                    break;
-                }
-            }
-        } catch (error) {
-            console.error('Error in shop command:', error);
-            const errorMessage = '❌ An error occurred while processing your request.';
-            if (!interaction.replied && !interaction.deferred) {
-                await interaction.reply({ content: errorMessage, ephemeral: true });
-            } else {
-                await interaction.editReply({ content: errorMessage, ephemeral: true });
-            }
+        if (itemName) {
+            await this.handleDirectPurchase(interaction, itemName, quantity);
+        } else if (category) {
+            await this.showCategory(interaction, category);
+        } else {
+            await this.showMainShop(interaction);
         }
     },
 
-    async showMainShop(interaction, userData) {
+    async showMainShop(interaction) {
+        const userData = await db.getPlayer(interaction.user.id) || { coins: 0 };
+        const itemManager = new ItemManager();
+        
         const embed = new EmbedBuilder()
-            .setTitle('🏪 Welcome to the Shop!')
-            .setDescription('Browse our categories and find what you need!')
-            .setColor('#FFD700')
-            .addFields(
-                { name: '💰 Your Balance', value: `${userData.coins} coins`, inline: true },
-                { name: '\u200B', value: '\u200B', inline: true },
-                { name: '📦 Inventory Space', value: `${Object.keys(userData.inventory || {}).length}/100`, inline: true }
-            );
+            .setColor(config.embedColors?.shop || '#FFD700')
+            .setTitle('🏪 Treasure Hunter\'s Emporium')
+            .setDescription('**Welcome to the finest shop in the realm!**\n*Browse our extensive collection of weapons, armor, tools, and magical items.*')
+            .setThumbnail('https://i.imgur.com/shop-icon.png')
+            .addFields([
+                {
+                    name: '💰 Your Wallet',
+                    value: `${userData.coins.toLocaleString()} coins`,
+                    inline: true
+                },
+                {
+                    name: '🏪 Shop Features',
+                    value: '• Instant delivery\n• Quality guaranteed\n• Bulk discounts available',
+                    inline: true
+                },
+                {
+                    name: '🎯 Daily Specials',
+                    value: this.getDailySpecials(),
+                    inline: true
+                }
+            ]);
 
-        const row = new ActionRowBuilder()
-            .addComponents(
-                new StringSelectMenuBuilder()
-                    .setCustomId('shop_category')
-                    .setPlaceholder('Select a category to browse')
-                    .addOptions([
-                        { label: 'Tools & Utilities', value: 'tools', emoji: '🔧', description: 'Essential tools for treasure hunting' },
-                        { label: 'Weapons', value: 'weapons', emoji: '⚔️', description: 'Increase your combat effectiveness' },
-                        { label: 'Armor & Defense', value: 'armor', emoji: '🛡️', description: 'Protect yourself in battle' },
-                        { label: 'Potions & Consumables', value: 'potions', emoji: '🧪', description: 'Healing and temporary boosts' },
-                        { label: 'Pets & Companions', value: 'pets', emoji: '🐾', description: 'Loyal friends for your journey' }
-                    ])
-            );
-
-        const response = await interaction.editReply({
-            embeds: [embed],
-            components: [row]
+        // Add category previews
+        Object.entries(SHOP_CATEGORIES).forEach(([key, cat]) => {
+            const items = itemManager.getItemsByType(key);
+            const preview = items.slice(0, 3).map(item => `• ${item.name}`).join('\n');
+            
+            embed.addFields([{
+                name: `${cat.emoji} ${cat.name} (${items.length} items)`,
+                value: preview + (items.length > 3 ? `\n*+${items.length - 3} more items*` : ''),
+                inline: true
+            }]);
         });
 
-        try {
-            const filter = i => i.user.id === interaction.user.id && i.customId === 'shop_category';
-            const collector = response.createMessageComponentCollector({ filter, time: 60000 });
-
-            collector.on('collect', async i => {
-                await i.deferUpdate();
-                await this.showCategory(interaction, i.values[0], userData);
-                collector.stop();
-            });
-
-            collector.on('end', async (collected, reason) => {
-                if (reason === 'time') {
-                    const disabledRow = new ActionRowBuilder()
-                        .addComponents(
-                            StringSelectMenuBuilder.from(row.components[0])
-                                .setDisabled(true)
-                                .setPlaceholder('Timed out - Run command again')
-                        );
-
-                    await interaction.editReply({
-                        embeds: [embed],
-                        components: [disabledRow]
-                    });
+        const categorySelect = new StringSelectMenuBuilder()
+            .setCustomId('shop_category_select')
+            .setPlaceholder('🛒 Choose a category to browse...')
+            .addOptions([
+                ...Object.entries(SHOP_CATEGORIES).map(([key, cat]) => ({
+                    label: cat.name,
+                    description: `Browse ${itemManager.getItemsByType(key).length} items`,
+                    value: `shop_${key}`,
+                    emoji: cat.emoji
+                })),
+                {
+                    label: 'Featured Items',
+                    description: 'Hand-picked premium items',
+                    value: 'shop_featured',
+                    emoji: '✨'
+                },
+                {
+                    label: 'Sale Items',
+                    description: 'Discounted items for limited time',
+                    value: 'shop_sale',
+                    emoji: '🏷️'
                 }
-            });
-        } catch (error) {
-            console.error('Error in shop collector:', error);
-        }
-    },
+            ]);
 
-    async showCategory(interaction, category, userData) {
-        const items = shopItems[category] || [];
-        if (items.length === 0) {
-            await interaction.editReply('❌ No items found in this category!');
-            return;
-        }
-
-        const embed = new EmbedBuilder()
-            .setTitle(`${this.getCategoryEmoji(category)} ${this.getCategoryName(category)}`)
-            .setDescription('Select an item to purchase:')
-            .setColor('#FFD700')
-            .setFields(items.map(item => ({
-                name: `${item.emoji} ${item.name}`,
-                value: `💰 **${item.price}** coins\n${item.description}`,
-                inline: true
-            })))
-            .addFields({ name: '💰 Your Balance', value: `${userData.coins} coins`, inline: false });
-
-        const row = new ActionRowBuilder()
-            .addComponents(
-                new StringSelectMenuBuilder()
-                    .setCustomId('shop_item')
-                    .setPlaceholder('Select an item to purchase')
-                    .addOptions(items.map(item => ({
-                        label: `${item.name} (${item.price} coins)`,
-                        value: item.id,
-                        description: item.description.substring(0, 50),
-                        emoji: item.emoji
-                    })))
-            );
-
-        const backButton = new ActionRowBuilder()
+        const buttons = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
-                    .setCustomId('shop_back')
-                    .setLabel('Back to Categories')
+                    .setCustomId('shop_search')
+                    .setLabel('🔍 Search Items')
+                    .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                    .setCustomId('shop_cart')
+                    .setLabel('🛒 View Cart')
+                    .setStyle(ButtonStyle.Secondary),
+                new ButtonBuilder()
+                    .setCustomId('shop_history')
+                    .setLabel('📋 Purchase History')
+                    .setStyle(ButtonStyle.Secondary),
+                new ButtonBuilder()
+                    .setCustomId('shop_wishlist')
+                    .setLabel('❤️ Wishlist')
                     .setStyle(ButtonStyle.Secondary)
             );
 
-        const response = await interaction.editReply({
-            embeds: [embed],
-            components: [row, backButton]
+        const components = [
+            new ActionRowBuilder().addComponents(categorySelect),
+            buttons
+        ];
+
+        await interaction.reply({ embeds: [embed], components });
+    },
+
+    async showCategory(interaction, category) {
+        const userData = await db.getPlayer(interaction.user.id) || { coins: 0 };
+        const itemManager = new ItemManager();
+        const items = itemManager.getItemsByType(category);
+        
+        if (items.length === 0) {
+            return await interaction.reply({
+                content: `❌ No items found in the ${category} category.`,
+                ephemeral: true
+            });
+        }
+
+        const categoryInfo = SHOP_CATEGORIES[category];
+        const embed = new EmbedBuilder()
+            .setColor(config.embedColors?.shop || '#FFD700')
+            .setTitle(`${categoryInfo.emoji} ${categoryInfo.name}`)
+            .setDescription(`**${items.length} premium items available**`)
+            .addFields([
+                {
+                    name: '💰 Your Budget',
+                    value: `${userData.coins.toLocaleString()} coins`,
+                    inline: true
+                },
+                {
+                    name: '📊 Price Range',
+                    value: this.getPriceRange(items),
+                    inline: true
+                },
+                {
+                    name: '⭐ Quality Range',
+                    value: this.getQualityRange(items),
+                    inline: true
+                }
+            ]);
+
+        // Sort items by rarity and price
+        const sortedItems = items.sort((a, b) => {
+            const rarityOrder = { common: 1, uncommon: 2, rare: 3, epic: 4, legendary: 5 };
+            return (rarityOrder[a.rarity] || 0) - (rarityOrder[b.rarity] || 0) || a.price - b.price;
         });
 
-        try {
-            const filter = i => i.user.id === interaction.user.id;
-            const collector = response.createMessageComponentCollector({ filter, time: 60000 });
+        // Add items to embed (max 10 per page)
+        const itemsToShow = sortedItems.slice(0, 10);
+        itemsToShow.forEach(item => {
+            const affordable = userData.coins >= item.price;
+            const priceDisplay = affordable ? 
+                `💰 ${item.price.toLocaleString()} coins` : 
+                `💰 ~~${item.price.toLocaleString()}~~ coins ❌`;
+            
+            const statsDisplay = Object.entries(item.stats)
+                .map(([stat, value]) => `${this.getStatIcon(stat)} ${value}`)
+                .slice(0, 3)
+                .join(' • ');
 
-            collector.on('collect', async i => {
-                try {
-                    if (!i.isStringSelectMenu() && !i.isButton()) return;
+            embed.addFields([{
+                name: `${item.getRarityIcon()} ${item.name}`,
+                value: `${item.description}\n${priceDisplay}\n${statsDisplay ? `📊 ${statsDisplay}` : ''}`,
+                inline: true
+            }]);
+        });
 
-                    await i.deferUpdate().catch(() => null);
-
-                    // Get fresh user data for each interaction
-                    userData = await getUserData(interaction.user.id);
-                    if (!userData) {
-                        await interaction.followUp({ content: '❌ Your profile data could not be loaded.', ephemeral: true });
-                        return;
-                    }
-
-                    if (i.customId === 'shop_back') {
-                        await this.showMainShop(interaction, userData);
-                        collector.stop();
-                        return;
-                    }
-
-                    if (i.customId === 'shop_category') {
-                        await this.showCategory(interaction, i.values[0], userData);
-                        collector.stop();
-                        return;
-                    }
-
-                    if (i.customId === 'shop_item') {
-                        const selectedItem = items.find(item => item.id === i.values[0]);
-                        if (selectedItem) {
-                            await this.handlePurchase(interaction, selectedItem.id, 1, userData);
-                            collector.stop();
-                        } else {
-                            await interaction.followUp({ content: '❌ Item not found.', ephemeral: true });
-                        }
-                        return;
-                    }
-
-                    if (i.customId === 'buy_1' || i.customId === 'buy_5') {
-                        const quantity = i.customId === 'buy_1' ? 1 : 5;
-                        const selectedItem = items.find(item => item.id === i.values[0]);
-                        if (selectedItem) {
-                            await this.handlePurchase(interaction, selectedItem.id, quantity, userData);
-                            collector.stop();
-                        }
-                        return;
-                    }
-                } catch (error) {
-                    console.error('Error in shop interaction:', error);
-                    try {
-                        await interaction.followUp({ 
-                            content: '❌ An error occurred while processing your request. Please try again.', 
-                            ephemeral: true 
-                        });
-                    } catch (e) {
-                        console.error('Failed to send error message:', e);
-                    }
-                }
+        if (sortedItems.length > 10) {
+            embed.setFooter({ 
+                text: `Showing 10 of ${sortedItems.length} items. Use navigation to see more.` 
             });
-
-            collector.on('end', async (collected, reason) => {
-                if (reason === 'time') {
-                    const disabledComponents = [row, backButton].map(component =>
-                        ActionRowBuilder.from(component).setComponents(
-                            component.components[0].setDisabled(true)
-                        )
-                    );
-
-                    await interaction.editReply({
-                        embeds: [embed],
-                        components: disabledComponents
-                    });
-                }
-            });
-        } catch (error) {
-            console.error('Error in category collector:', error);
         }
+
+        const itemSelect = new StringSelectMenuBuilder()
+            .setCustomId(`shop_buy_select_${category}`)
+            .setPlaceholder('💰 Select an item to purchase...')
+            .addOptions(itemsToShow.map(item => ({
+                label: item.name,
+                description: `${item.price.toLocaleString()} coins - ${item.rarity}`,
+                value: `buy_${item.id}`,
+                emoji: item.getRarityIcon()
+            })));
+
+        const buttons = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('shop_main')
+                    .setLabel('← Back to Shop')
+                    .setStyle(ButtonStyle.Secondary),
+                new ButtonBuilder()
+                    .setCustomId(`shop_sort_${category}`)
+                    .setLabel('🔄 Sort Options')
+                    .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                    .setCustomId(`shop_filter_${category}`)
+                    .setLabel('🔍 Filter Items')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+        if (sortedItems.length > 10) {
+            buttons.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`shop_next_${category}_10`)
+                    .setLabel('Next Page →')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+        }
+
+        const components = [
+            new ActionRowBuilder().addComponents(itemSelect),
+            buttons
+        ];
+
+        await interaction.reply({ embeds: [embed], components });
     },
 
-    async handlePurchase(interaction, itemId, quantity, userData) {
-        let foundItem = null;
-        for (const categoryItems of Object.values(shopItems)) {
-            foundItem = categoryItems.find(item => item.id === itemId);
-            if (foundItem) break;
+    async handleDirectPurchase(interaction, itemName, quantity) {
+        const userData = await db.getPlayer(interaction.user.id) || { coins: 0, inventory: { items: [] } };
+        const itemManager = new ItemManager();
+        
+        // Find item by name (fuzzy matching)
+        const allItems = itemManager.getAllItems();
+        const item = allItems.find(i => 
+            i.name.toLowerCase().includes(itemName.toLowerCase()) ||
+            i.id === itemName
+        );
+
+        if (!item) {
+            return await interaction.reply({
+                content: `❌ Item "${itemName}" not found in shop. Use \`/shop\` to browse available items.`,
+                ephemeral: true
+            });
         }
 
-        if (!foundItem) {
-            await interaction.editReply('❌ Item not found!');
-            return;
-        }
-
-        const totalCost = foundItem.price * quantity;
+        const totalCost = item.price * quantity;
+        
         if (userData.coins < totalCost) {
-            await interaction.editReply(`❌ You don't have enough coins! You need ${totalCost} coins.`);
-            return;
-        }
-
-        // Update user data
-        userData.coins -= totalCost;
-        userData.inventory = userData.inventory || {};
-        userData.inventory[itemId] = (userData.inventory[itemId] || 0) + quantity;
-
-        try {
-            await updateUserData(interaction.user.id, userData);
-
             const embed = new EmbedBuilder()
-                .setTitle('Purchase Successful!')
-                .setDescription(`You bought ${quantity}x ${foundItem.emoji} ${foundItem.name}`)
-                .setColor('#00FF00')
-                .addFields(
-                    { name: '💰 Total Cost', value: `${totalCost} coins`, inline: true },
-                    { name: '💰 Remaining Balance', value: `${userData.coins} coins`, inline: true }
-                );
+                .setColor(config.embedColors?.error || '#FF0000')
+                .setTitle('💸 Insufficient Funds')
+                .setDescription(`You need **${(totalCost - userData.coins).toLocaleString()}** more coins!`)
+                .addFields([
+                    { name: '💰 Your Balance', value: `${userData.coins.toLocaleString()} coins`, inline: true },
+                    { name: '🛒 Total Cost', value: `${totalCost.toLocaleString()} coins`, inline: true },
+                    { name: '💡 Tip', value: 'Try `/daily`, `/work`, or `/hunt` to earn more coins!', inline: false }
+                ]);
 
-            await interaction.editReply({ embeds: [embed] });
-        } catch (error) {
-            console.error('Error updating user data:', error);
-            await interaction.editReply('❌ Failed to complete the purchase. Please try again.');
+            return await interaction.reply({ embeds: [embed], ephemeral: true });
+        }
+
+        // Apply bulk discount
+        let discount = 0;
+        if (quantity >= 10) discount = 0.1;
+        else if (quantity >= 5) discount = 0.05;
+        
+        const discountedCost = Math.floor(totalCost * (1 - discount));
+        const savedAmount = totalCost - discountedCost;
+
+        // Process purchase
+        for (let i = 0; i < quantity; i++) {
+            userData.inventory.items.push({
+                id: item.id,
+                obtained: Date.now(),
+                source: 'shop'
+            });
+        }
+
+        userData.coins -= discountedCost;
+
+        await db.updatePlayer(interaction.user.id, {
+            coins: userData.coins,
+            inventory: userData.inventory
+        });
+
+        const embed = new EmbedBuilder()
+            .setColor(config.embedColors?.success || '#00FF00')
+            .setTitle('🎉 Purchase Successful!')
+            .setDescription(`**${quantity}x ${item.name}** added to your inventory!`)
+            .addFields([
+                { name: '💰 Cost', value: `${discountedCost.toLocaleString()} coins`, inline: true },
+                { name: '💰 Remaining', value: `${userData.coins.toLocaleString()} coins`, inline: true },
+                { name: '📦 Items Received', value: `${quantity}x ${item.name}`, inline: true }
+            ]);
+
+        if (savedAmount > 0) {
+            embed.addFields([
+                { name: '🎁 Bulk Discount', value: `Saved ${savedAmount.toLocaleString()} coins (${Math.floor(discount * 100)}% off)!`, inline: false }
+            ]);
+        }
+
+        embed.setFooter({ text: 'Use /inventory to view your items!' });
+
+        const buttons = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('shop_main')
+                    .setLabel('🛒 Continue Shopping')
+                    .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                    .setCustomId('inventory_view')
+                    .setLabel('🎒 View Inventory')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+
+        await interaction.reply({ embeds: [embed], components: [buttons] });
+    },
+
+    // Autocomplete handler
+    async autocomplete(interaction) {
+        const focusedValue = interaction.options.getFocused().toLowerCase();
+        const itemManager = new ItemManager();
+        const allItems = itemManager.getAllItems();
+
+        const filtered = allItems
+            .filter(item => item.name.toLowerCase().includes(focusedValue))
+            .slice(0, 25)
+            .map(item => ({
+                name: `${item.name} (${item.price.toLocaleString()} coins)`,
+                value: item.id
+            }));
+
+        await interaction.respond(filtered);
+    },
+
+    // Button handlers
+    buttonHandlers: {
+        async main(interaction) {
+            await module.exports.showMainShop(interaction);
+        },
+
+        async search(interaction) {
+            // Implement search functionality
+            await interaction.reply({
+                content: '🔍 Search functionality coming soon! Use the category dropdowns for now.',
+                ephemeral: true
+            });
+        },
+
+        async cart(interaction) {
+            await interaction.reply({
+                content: '🛒 Shopping cart feature coming soon! Items are purchased instantly for now.',
+                ephemeral: true
+            });
+        },
+
+        async history(interaction) {
+            await interaction.reply({
+                content: '📋 Purchase history feature coming soon!',
+                ephemeral: true
+            });
+        },
+
+        async wishlist(interaction) {
+            await interaction.reply({
+                content: '❤️ Wishlist feature coming soon!',
+                ephemeral: true
+            });
         }
     },
 
-    async handleSale(interaction, itemId, quantity, userData) {
-        let foundItem = null;
-        for (const categoryItems of Object.values(shopItems)) {
-            foundItem = categoryItems.find(item => item.id === itemId);
-            if (foundItem) break;
-        }
+    // Select menu handlers
+    selectMenuHandlers: {
+        async category_select(interaction) {
+            const selectedValue = interaction.values[0];
+            const category = selectedValue.replace('shop_', '');
+            
+            if (category === 'featured' || category === 'sale') {
+                await interaction.reply({
+                    content: `✨ ${category} section coming soon!`,
+                    ephemeral: true
+                });
+            } else {
+                await this.showCategory(interaction, category);
+            }
+        },
 
-        if (!foundItem) {
-            await interaction.editReply('❌ Item not found!');
-            return;
-        }
-
-        const currentQuantity = userData.inventory?.[itemId] || 0;
-        if (currentQuantity < quantity) {
-            await interaction.editReply(`❌ You don't have enough ${foundItem.name} to sell!`);
-            return;
-        }
-
-        const sellPrice = Math.floor(foundItem.price * 0.5); // 50% of original price
-        const totalEarnings = sellPrice * quantity;
-
-        // Update user data
-        userData.coins += totalEarnings;
-        userData.inventory[itemId] -= quantity;
-        if (userData.inventory[itemId] <= 0) {
-            delete userData.inventory[itemId];
-        }
-
-        try {
-            await updateUserData(interaction.user.id, userData);
-
-            const embed = new EmbedBuilder()
-                .setTitle('Sale Successful!')
-                .setDescription(`You sold ${quantity}x ${foundItem.emoji} ${foundItem.name}`)
-                .setColor('#00FF00')
-                .addFields(
-                    { name: '💰 Earnings', value: `${totalEarnings} coins`, inline: true },
-                    { name: '💰 New Balance', value: `${userData.coins} coins`, inline: true }
-                );
-
-            await interaction.editReply({ embeds: [embed] });
-        } catch (error) {
-            console.error('Error updating user data:', error);
-            await interaction.editReply('❌ Failed to complete the sale. Please try again.');
+        async buy_select(interaction) {
+            const selectedValue = interaction.values[0];
+            const itemId = selectedValue.replace('buy_', '');
+            
+            await this.handleDirectPurchase(interaction, itemId, 1);
         }
     },
 
-    getCategoryName(category) {
-        const names = {
-            tools: 'Tools & Utilities',
-            weapons: 'Weapons',
-            armor: 'Armor & Defense',
-            potions: 'Potions & Consumables',
-            pets: 'Pets & Companions'
+    // Helper methods
+    getDailySpecials() {
+        const specials = [
+            '🎯 Treasure Maps -20%',
+            '⚔️ Iron Weapons -15%',
+            '🧪 Health Potions -25%'
+        ];
+        return specials.join('\n');
+    },
+
+    getPriceRange(items) {
+        if (items.length === 0) return 'N/A';
+        const prices = items.map(i => i.price).sort((a, b) => a - b);
+        return `${prices[0].toLocaleString()} - ${prices[prices.length - 1].toLocaleString()} coins`;
+    },
+
+    getQualityRange(items) {
+        const rarities = [...new Set(items.map(i => i.rarity))];
+        return rarities.map(r => r.charAt(0).toUpperCase() + r.slice(1)).join(', ');
+    },
+
+    getStatIcon(stat) {
+        const icons = {
+            attack: '⚔️',
+            defense: '🛡️',
+            health: '❤️',
+            speed: '⚡',
+            luck: '🍀',
+            power: '💪',
+            durability: '🔧'
         };
-        return names[category] || 'Unknown Category';
-    },
-
-    getCategoryEmoji(category) {
-        const emojis = {
-            tools: '🔧',
-            weapons: '⚔️',
-            armor: '🛡️',
-            potions: '🧪',
-            pets: '🐾'
-        };
-        return emojis[category] || '❓';
+        return icons[stat.toLowerCase()] || '📊';
     }
 };

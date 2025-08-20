@@ -1,499 +1,427 @@
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require('discord.js');
 const config = require('../../config.js');
-const db = require('../../database.js');
+const { db } = require('../../database.js');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('stats')
-        .setDescription('📊 View detailed statistics and analytics!')
-        .addStringOption(option =>
-            option.setName('category')
-                .setDescription('Choose statistics category')
-                .setRequired(false)
-                .addChoices(
-                    { name: '📈 Overall Summary', value: 'overall' },
-                    { name: '🏴‍☠️ Treasure Hunting', value: 'hunting' },
-                    { name: '⚔️ Combat & Arena', value: 'combat' },
-                    { name: '💰 Economy & Wealth', value: 'economy' },
-                    { name: '🗺️ Exploration', value: 'exploration' },
-                    { name: '🔮 Magic & Spells', value: 'magic' },
-                    { name: '👥 Social & Guilds', value: 'social' },
-                    { name: '🏆 Achievements', value: 'achievements' }
-                ))
+        .setDescription('📊 View comprehensive player statistics and progress!')
         .addUserOption(option =>
             option.setName('user')
-                .setDescription('View another user\'s statistics')
-                .setRequired(false)),
-    
+                .setDescription('View another player\'s stats')
+                .setRequired(false))
+        .addStringOption(option =>
+            option.setName('category')
+                .setDescription('View specific stat category')
+                .setRequired(false)
+                .addChoices(
+                    { name: '⚔️ Combat Stats', value: 'combat' },
+                    { name: '💰 Economy Stats', value: 'economy' },
+                    { name: '🎯 Activity Stats', value: 'activity' },
+                    { name: '🏆 Achievements', value: 'achievements' },
+                    { name: '📈 Progress', value: 'progress' }
+                )),
+
     async execute(interaction) {
-        const category = interaction.options?.getString('category') || 'overall';
         const targetUser = interaction.options?.getUser('user') || interaction.user;
-        const userId = targetUser.id;
-        const isOwnStats = userId === interaction.user.id;
-        
-        await this.showStatistics(interaction, category, targetUser, isOwnStats);
-    },
-    
-    async showStatistics(interaction, category, targetUser, isOwnStats) {
-        const userId = targetUser.id;
-        const userData = await db.getPlayer(userId) || {};
-        
-        switch (category) {
-            case 'hunting':
-                await this.showHuntingStats(interaction, userData, targetUser, isOwnStats);
-                break;
-            case 'combat':
-                await this.showCombatStats(interaction, userData, targetUser, isOwnStats);
-                break;
-            case 'economy':
-                await this.showEconomyStats(interaction, userData, targetUser, isOwnStats);
-                break;
-            case 'exploration':
-                await this.showExplorationStats(interaction, userData, targetUser, isOwnStats);
-                break;
-            case 'magic':
-                await this.showMagicStats(interaction, userData, targetUser, isOwnStats);
-                break;
-            case 'social':
-                await this.showSocialStats(interaction, userData, targetUser, isOwnStats);
-                break;
-            case 'achievements':
-                await this.showAchievementStats(interaction, userData, targetUser, isOwnStats);
-                break;
-            default:
+        const category = interaction.options?.getString('category');
+        const isOwnStats = targetUser.id === interaction.user.id;
+
+        try {
+            const userData = await db.getPlayer(targetUser.id);
+            if (!userData) {
+                return await interaction.reply({
+                    content: `❌ ${isOwnStats ? 'You don\'t' : 'This user doesn\'t'} have a treasure hunter profile yet!`,
+                    ephemeral: true
+                });
+            }
+
+            if (category) {
+                await this.showCategoryStats(interaction, userData, targetUser, category, isOwnStats);
+            } else {
                 await this.showOverallStats(interaction, userData, targetUser, isOwnStats);
+            }
+
+        } catch (error) {
+            console.error('Stats command error:', error);
+            await interaction.reply({
+                content: '❌ An error occurred while loading statistics. Please try again.',
+                ephemeral: true
+            });
         }
     },
-    
+
     async showOverallStats(interaction, userData, targetUser, isOwnStats) {
-        const stats = userData.stats || {};
-        const playTime = this.calculatePlayTime(userData);
-        const efficiency = this.calculateEfficiency(userData);
-        
+        const stats = this.calculateStats(userData);
+
         const embed = new EmbedBuilder()
-            .setColor(config.embedColors.profile)
-            .setTitle(`📊 ${targetUser.displayName}'s Adventure Statistics`)
-            .setDescription('**Complete overview of your adventuring journey**')
+            .setColor(config.embedColors?.stats || '#FFD700')
+            .setTitle(`📊 ${isOwnStats ? 'Your' : `${targetUser.displayName}'s`} Adventure Statistics`)
             .setThumbnail(targetUser.displayAvatarURL())
+            .setDescription(`**Treasure Hunter Level ${userData.level || 1}** • **${userData.experience || 0} XP**`)
             .addFields([
                 {
-                    name: '🎮 General Progress',
-                    value: `⭐ Level: **${stats.level || 1}**\n🎯 Total XP: **${stats.experience || 0}**\n📅 Days Played: **${playTime.days}**\n⏰ Total Playtime: **${playTime.hours}h**`,
+                    name: '⚔️ Combat Power',
+                    value: `**Level:** ${userData.level || 1}\n**Health:** ${userData.health || 100}/${userData.maxHealth || 100}\n**Strength:** ${userData.strength || 10}\n**Defense:** ${userData.defense || 10}`,
                     inline: true
                 },
                 {
-                    name: '💰 Wealth & Economy',
-                    value: `💰 Current Coins: **${userData.inventory?.coins || 0}**\n💎 Total Earned: **${stats.totalEarned || 0}**\n🛒 Total Spent: **${stats.totalSpent || 0}**\n📈 Net Worth: **${this.calculateNetWorth(userData)}**`,
+                    name: '💰 Wealth Status',
+                    value: `**Coins:** ${(userData.coins || 0).toLocaleString()}\n**Bank:** ${(userData.bank?.savings || 0).toLocaleString()}\n**Net Worth:** ${stats.netWorth.toLocaleString()}\n**Rank:** ${stats.wealthRank}`,
                     inline: true
                 },
                 {
-                    name: '🏆 Major Achievements',
-                    value: `🗺️ Hunts: **${stats.huntsCompleted || 0}**\n⚔️ Battles Won: **${stats.battlesWon || 0}**\n🏰 Dungeons: **${stats.dungeonClears || 0}**\n🏅 Achievements: **${userData.achievements?.length || 0}**`,
+                    name: '🎯 Activity Summary',
+                    value: `**Commands Used:** ${stats.commandsUsed}\n**Daily Streak:** ${userData.dailyStreak || 0} days\n**Last Active:** ${stats.lastActive}\n**Play Time:** ${stats.playTime}`,
+                    inline: true
+                },
+                {
+                    name: '🏆 Achievements',
+                    value: `**Unlocked:** ${stats.achievementCount}/50\n**Progress:** ${Math.floor(stats.achievementCount / 50 * 100)}%\n**Latest:** ${stats.latestAchievement || 'None'}`,
+                    inline: true
+                },
+                {
+                    name: '📈 Skills Progress',
+                    value: `**Mining:** Lv.${userData.skills?.mining || 1}\n**Fishing:** Lv.${userData.skills?.fishing || 1}\n**Combat:** Lv.${userData.skills?.combat || 1}\n**Crafting:** Lv.${userData.skills?.crafting || 1}`,
+                    inline: true
+                },
+                {
+                    name: '🎒 Inventory Stats',
+                    value: `**Items:** ${stats.itemCount}\n**Unique Items:** ${stats.uniqueItems}\n**Equipment:** ${stats.equippedItems}/5\n**Bag Value:** ${stats.inventoryValue.toLocaleString()}`,
                     inline: true
                 }
-            ]);
-            
-        // Add activity breakdown
-        const activities = this.getActivityBreakdown(userData);
-        embed.addFields([
-            {
-                name: '📊 Activity Breakdown',
-                value: `${this.createProgressBar('Hunting', activities.hunting, 100)}\n${this.createProgressBar('Combat', activities.combat, 100)}\n${this.createProgressBar('Exploration', activities.exploration, 100)}\n${this.createProgressBar('Magic', activities.magic, 100)}`,
-                inline: false
-            }
-        ]);
-        
-        // Add efficiency metrics
-        embed.addFields([
-            {
-                name: '⚡ Efficiency Metrics',
-                value: `🎯 Success Rate: **${efficiency.successRate}%**\n💰 Coins/Hour: **${efficiency.coinsPerHour}**\n🏆 XP/Day: **${efficiency.xpPerDay}**\n📈 Growth Rate: **${efficiency.growthRate}%**`,
-                inline: true
-            },
-            {
-                name: '🏅 Rankings',
-                value: `🏆 Global Rank: **#${await this.getGlobalRank(userData)}**\n💰 Wealth Rank: **#${await this.getWealthRank(userData)}**\n⭐ Level Rank: **#${await this.getLevelRank(userData)}**`,
-                inline: true
-            },
-            {
-                name: '📈 Recent Performance',
-                value: `📊 Last 7 Days: **${this.getRecentActivity(userData)}**\n🔥 Current Streak: **${this.getCurrentStreak(userData)}**\n📅 Last Active: **${this.getLastActive(userData)}**`,
-                inline: true
-            }
-        ]);
-        
-        // Add milestones
-        const milestones = this.getUpcomingMilestones(userData);
-        if (milestones.length > 0) {
-            embed.addFields([
-                { name: '🎯 Upcoming Milestones', value: milestones.join('\n'), inline: false }
-            ]);
-        }
-        
+            ])
+            .setFooter({ 
+                text: `Profile created: ${userData.createdAt ? new Date(userData.createdAt).toLocaleDateString() : 'Unknown'}` 
+            })
+            .setTimestamp();
+
+        // Create interactive components
         const categorySelect = new StringSelectMenuBuilder()
-            .setCustomId('stats_category_select')
-            .setPlaceholder('📊 Select detailed statistics category...')
+            .setCustomId(`stats_category_${targetUser.id}`)
+            .setPlaceholder('📊 Select a category for detailed stats...')
             .addOptions([
-                {
-                    label: 'Treasure Hunting Stats',
-                    description: 'Detailed hunting performance and progress',
-                    value: 'stats_hunting',
-                    emoji: '🏴‍☠️'
-                },
-                {
-                    label: 'Combat & Arena Stats',
-                    description: 'Battle records and arena performance',
-                    value: 'stats_combat',
-                    emoji: '⚔️'
-                },
-                {
-                    label: 'Economy & Wealth Stats',
-                    description: 'Financial analytics and spending patterns',
-                    value: 'stats_economy',
-                    emoji: '💰'
-                },
-                {
-                    label: 'Exploration Stats',
-                    description: 'Mining, fishing, and foraging records',
-                    value: 'stats_exploration',
-                    emoji: '🗺️'
-                },
-                {
-                    label: 'Magic & Spells Stats',
-                    description: 'Magical progress and spell usage',
-                    value: 'stats_magic',
-                    emoji: '🔮'
-                },
-                {
-                    label: 'Social & Guild Stats',
-                    description: 'Guild activity and social interactions',
-                    value: 'stats_social',
-                    emoji: '👥'
-                },
-                {
-                    label: 'Achievement Progress',
-                    description: 'Achievement completion and rewards',
-                    value: 'stats_achievements',
-                    emoji: '🏆'
-                }
+                { label: '⚔️ Combat Stats', value: 'combat', description: 'Detailed combat and skill information' },
+                { label: '💰 Economy Stats', value: 'economy', description: 'Wealth, trading, and financial data' },
+                { label: '🎯 Activity Stats', value: 'activity', description: 'Usage patterns and engagement' },
+                { label: '🏆 Achievements', value: 'achievements', description: 'Unlocked achievements and progress' },
+                { label: '📈 Progress', value: 'progress', description: 'Leveling and skill progression' }
             ]);
-            
+
         const buttons = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
-                    .setCustomId('stats_refresh')
+                    .setCustomId(`stats_compare_${targetUser.id}`)
+                    .setLabel('⚖️ Compare')
+                    .setStyle(ButtonStyle.Primary)
+                    .setDisabled(!isOwnStats),
+                new ButtonBuilder()
+                    .setCustomId(`stats_refresh_${targetUser.id}`)
                     .setLabel('🔄 Refresh')
                     .setStyle(ButtonStyle.Secondary),
                 new ButtonBuilder()
-                    .setCustomId('stats_compare')
-                    .setLabel('📊 Compare with Friends')
-                    .setStyle(ButtonStyle.Primary),
+                    .setCustomId(`stats_export_${targetUser.id}`)
+                    .setLabel('📋 Export')
+                    .setStyle(ButtonStyle.Secondary),
                 new ButtonBuilder()
-                    .setCustomId('stats_export')
-                    .setLabel('📤 Export Data')
-                    .setStyle(ButtonStyle.Secondary)
-                    .setDisabled(!isOwnStats),
-                new ButtonBuilder()
-                    .setCustomId('stats_analytics')
-                    .setLabel('📈 Advanced Analytics')
+                    .setCustomId(`stats_leaderboard`)
+                    .setLabel('🏆 Leaderboard')
                     .setStyle(ButtonStyle.Success)
-                    .setDisabled(!isOwnStats)
             );
-            
-        const components = [
-            new ActionRowBuilder().addComponents(categorySelect),
-            buttons
-        ];
-        
-        await interaction.reply({ embeds: [embed], components });
+
+        await interaction.reply({
+            embeds: [embed],
+            components: [
+                new ActionRowBuilder().addComponents(categorySelect),
+                buttons
+            ]
+        });
     },
-    
-    async showHuntingStats(interaction, userData, targetUser, isOwnStats) {
-        const stats = userData.stats || {};
-        const huntingData = {
-            completed: stats.huntsCompleted || 0,
-            success: stats.huntSuccess || 0,
-            failed: stats.huntFailed || 0,
-            totalEarned: stats.huntEarnings || 0,
-            bestReward: stats.bestHuntReward || 0,
-            currentStreak: stats.huntStreak || 0,
-            bestStreak: stats.bestHuntStreak || 0,
-            averageTime: stats.averageHuntTime || 0,
-            riddles: stats.riddlesSolved || 0,
-            hints: stats.hintsUsed || 0
-        };
-        
-        const successRate = huntingData.completed > 0 ? Math.round((huntingData.success / huntingData.completed) * 100) : 0;
-        const averageReward = huntingData.completed > 0 ? Math.round(huntingData.totalEarned / huntingData.completed) : 0;
-        
+
+    async showCategoryStats(interaction, userData, targetUser, category, isOwnStats) {
         const embed = new EmbedBuilder()
-            .setColor(config.embedColors.hunt || 0xFF6347)
-            .setTitle(`🏴‍☠️ ${targetUser.displayName}'s Treasure Hunting Statistics`)
-            .setDescription('**Detailed analysis of treasure hunting performance**')
-            .setThumbnail(targetUser.displayAvatarURL())
-            .addFields([
-                {
-                    name: '📊 Hunt Performance',
-                    value: `🗺️ Total Hunts: **${huntingData.completed}**\n✅ Successful: **${huntingData.success}**\n❌ Failed: **${huntingData.failed}**\n📈 Success Rate: **${successRate}%**`,
-                    inline: true
-                },
-                {
-                    name: '💰 Earnings Analysis',
-                    value: `💎 Total Earned: **${huntingData.totalEarned}** coins\n🏆 Best Reward: **${huntingData.bestReward}** coins\n📊 Average Reward: **${averageReward}** coins\n💰 Coins/Hunt: **${averageReward}**`,
-                    inline: true
-                },
-                {
-                    name: '🔥 Streaks & Records',
-                    value: `🔥 Current Streak: **${huntingData.currentStreak}**\n🏅 Best Streak: **${huntingData.bestStreak}**\n⏰ Average Time: **${huntingData.averageTime}** min\n🎯 Efficiency: **${this.calculateHuntEfficiency(huntingData)}%**`,
-                    inline: true
-                },
-                {
-                    name: '🧩 Riddle Mastery',
-                    value: `✅ Riddles Solved: **${huntingData.riddles}**\n💡 Hints Used: **${huntingData.hints}**\n🧠 Solve Rate: **${huntingData.riddles > 0 ? Math.round((huntingData.riddles / (huntingData.riddles + huntingData.hints)) * 100) : 0}%**\n🎓 Riddle Master: **${huntingData.riddles >= 100 ? 'YES' : 'NO'}**`,
-                    inline: true
-                },
-                {
-                    name: '📈 Progress Trends',
-                    value: `📊 Weekly Hunts: **${this.getWeeklyHunts(userData)}**\n📈 Monthly Growth: **${this.getMonthlyGrowth(userData, 'hunts')}%**\n🎯 Daily Average: **${this.getDailyAverage(userData, 'hunts')}**`,
-                    inline: true
-                },
-                {
-                    name: '🏆 Hunt Rankings',
-                    value: `🥇 Global Hunt Rank: **#${await this.getHuntRank(userData)}**\n💰 Earnings Rank: **#${await this.getEarningsRank(userData)}**\n🔥 Streak Rank: **#${await this.getStreakRank(userData)}**`,
-                    inline: true
-                }
-            ]);
-            
-        // Add difficulty breakdown
-        const difficultyStats = this.getDifficultyBreakdown(userData);
-        embed.addFields([
-            {
-                name: '⚡ Difficulty Breakdown',
-                value: `🟢 Easy: **${difficultyStats.easy}** hunts\n🟡 Medium: **${difficultyStats.medium}** hunts\n🔴 Hard: **${difficultyStats.hard}** hunts\n⚫ Expert: **${difficultyStats.expert}** hunts`,
-                inline: false
-            }
-        ]);
-        
-        const buttons = new ActionRowBuilder()
+            .setColor(config.embedColors?.stats || '#FFD700')
+            .setAuthor({ 
+                name: `${isOwnStats ? 'Your' : `${targetUser.displayName}'s`} ${this.getCategoryName(category)}`,
+                iconURL: targetUser.displayAvatarURL()
+            });
+
+        switch (category) {
+            case 'combat':
+                this.addCombatStats(embed, userData);
+                break;
+            case 'economy':
+                this.addEconomyStats(embed, userData);
+                break;
+            case 'activity':
+                this.addActivityStats(embed, userData);
+                break;
+            case 'achievements':
+                this.addAchievementStats(embed, userData);
+                break;
+            case 'progress':
+                this.addProgressStats(embed, userData);
+                break;
+        }
+
+        const backButton = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
-                    .setCustomId('stats_overall')
+                    .setCustomId(`stats_back_${targetUser.id}`)
                     .setLabel('← Back to Overview')
                     .setStyle(ButtonStyle.Secondary),
                 new ButtonBuilder()
-                    .setCustomId('hunt_analysis')
-                    .setLabel('📈 Detailed Analysis')
-                    .setStyle(ButtonStyle.Primary),
-                new ButtonBuilder()
-                    .setCustomId('hunt_tips')
-                    .setLabel('💡 Improvement Tips')
-                    .setStyle(ButtonStyle.Success)
+                    .setCustomId(`stats_refresh_${targetUser.id}`)
+                    .setLabel('🔄 Refresh')
+                    .setStyle(ButtonStyle.Primary)
             );
-            
-        await interaction.reply({ embeds: [embed], components: [buttons] });
+
+        await interaction.reply({
+            embeds: [embed],
+            components: [backButton]
+        });
     },
-    
+
+    // Button handlers
+    buttonHandlers: {
+        async compare(interaction) {
+            await interaction.reply({
+                content: '⚖️ **Player Comparison** feature coming soon!\nCompare your stats with friends and server members.',
+                ephemeral: true
+            });
+        },
+
+        async refresh(interaction) {
+            const targetUserId = interaction.customId.split('_')[2];
+            const targetUser = await interaction.client.users.fetch(targetUserId);
+
+            const newInteraction = {
+                ...interaction,
+                options: {
+                    getUser: (name) => name === 'user' ? targetUser : interaction.user,
+                    getString: () => null
+                }
+            };
+
+            await module.exports.execute(newInteraction);
+        },
+
+        async export(interaction) {
+            const targetUserId = interaction.customId.split('_')[2];
+            const userData = await db.getPlayer(targetUserId);
+            const stats = this.calculateStats(userData);
+
+            const exportData = {
+                player: interaction.user.username,
+                level: userData.level || 1,
+                experience: userData.experience || 0,
+                coins: userData.coins || 0,
+                netWorth: stats.netWorth,
+                achievements: stats.achievementCount,
+                playTime: stats.playTime,
+                exported: new Date().toISOString()
+            };
+
+            await interaction.reply({
+                content: `📋 **Stats Export**\n\`\`\`json\n${JSON.stringify(exportData, null, 2)}\`\`\``,
+                ephemeral: true
+            });
+        },
+
+        async leaderboard(interaction) {
+            // This would integrate with the leaderboard command
+            await interaction.reply({
+                content: '🏆 Use `/leaderboard` to view server rankings and compete with other treasure hunters!',
+                ephemeral: true
+            });
+        },
+
+        async back(interaction) {
+            const targetUserId = interaction.customId.split('_')[2];
+            const targetUser = await interaction.client.users.fetch(targetUserId);
+
+            const newInteraction = {
+                ...interaction,
+                options: {
+                    getUser: (name) => name === 'user' ? targetUser : interaction.user,
+                    getString: () => null
+                }
+            };
+
+            await module.exports.showOverallStats(newInteraction, await db.getPlayer(targetUserId), targetUser, targetUserId === interaction.user.id);
+        }
+    },
+
+    // Select menu handlers
+    selectMenuHandlers: {
+        async category(interaction) {
+            const category = interaction.values[0];
+            const targetUserId = interaction.customId.split('_')[2];
+            const targetUser = await interaction.client.users.fetch(targetUserId);
+            const userData = await db.getPlayer(targetUserId);
+
+            await this.showCategoryStats(interaction, userData, targetUser, category, targetUserId === interaction.user.id);
+        }
+    },
+
     // Helper methods
-    calculatePlayTime(userData) {
-        const joinDate = userData.stats?.joinDate || Date.now();
-        const totalTime = Date.now() - joinDate;
-        const days = Math.floor(totalTime / (24 * 60 * 60 * 1000));
-        const hours = Math.floor(totalTime / (60 * 60 * 1000));
-        return { days, hours };
-    },
-    
-    calculateEfficiency(userData) {
-        const stats = userData.stats || {};
-        const hunts = stats.huntsCompleted || 0;
-        const battles = stats.battlesWon || 0;
-        const total = hunts + battles;
-        const success = hunts + battles; // Simplified
-        
+    calculateStats(userData) {
+        const inventoryValue = userData.inventory?.items?.reduce((sum, item) => {
+            // This would calculate based on item prices
+            return sum + 100; // Placeholder
+        }, 0) || 0;
+
         return {
-            successRate: total > 0 ? Math.round((success / total) * 100) : 0,
-            coinsPerHour: this.calculateCoinsPerHour(userData),
-            xpPerDay: this.calculateXpPerDay(userData),
-            growthRate: this.calculateGrowthRate(userData)
+            netWorth: (userData.coins || 0) + (userData.bank?.savings || 0) + inventoryValue,
+            wealthRank: this.calculateWealthRank(userData.coins || 0),
+            commandsUsed: userData.statistics?.commandsUsed || 0,
+            lastActive: this.formatLastActive(userData.lastActive),
+            playTime: this.formatPlayTime(userData.playTime),
+            achievementCount: userData.achievements?.length || 0,
+            latestAchievement: userData.achievements?.[userData.achievements.length - 1]?.name || 'None',
+            itemCount: userData.inventory?.items?.length || 0,
+            uniqueItems: new Set(userData.inventory?.items?.map(i => i.id) || []).size,
+            equippedItems: userData.equipment ? Object.keys(userData.equipment).length : 0,
+            inventoryValue
         };
     },
-    
-    calculateNetWorth(userData) {
-        const coins = userData.inventory?.coins || 0;
-        const items = userData.inventory?.items || [];
-        const itemValue = items.reduce((total, item) => total + (item.value || 0), 0);
-        return coins + itemValue;
+
+    calculateWealthRank(coins) {
+        if (coins >= 1000000) return 'Tycoon 💎';
+        if (coins >= 500000) return 'Wealthy 💰';
+        if (coins >= 100000) return 'Rich 🏆';
+        if (coins >= 50000) return 'Comfortable 💴';
+        if (coins >= 10000) return 'Stable 💵';
+        return 'Starting Out 🪙';
     },
-    
-    getActivityBreakdown(userData) {
-        const stats = userData.stats || {};
-        return {
-            hunting: Math.min((stats.huntsCompleted || 0) * 2, 100),
-            combat: Math.min((stats.battlesWon || 0) * 3, 100),
-            exploration: Math.min(((stats.totalMined || 0) + (stats.totalFish || 0)) / 2, 100),
-            magic: Math.min((userData.magic?.spellsCast || 0), 100)
+
+    formatLastActive(timestamp) {
+        if (!timestamp) return 'Unknown';
+        const diff = Date.now() - timestamp;
+        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+        if (days === 0) return 'Today';
+        if (days === 1) return 'Yesterday';
+        return `${days} days ago`;
+    },
+
+    formatPlayTime(seconds) {
+        if (!seconds) return '0 hours';
+        const hours = Math.floor(seconds / 3600);
+        return `${hours} hours`;
+    },
+
+    getCategoryName(category) {
+        const names = {
+            combat: '⚔️ Combat Statistics',
+            economy: '💰 Economic Overview',
+            activity: '🎯 Activity Report',
+            achievements: '🏆 Achievement Progress',
+            progress: '📈 Character Progression'
         };
+        return names[category] || 'Statistics';
     },
-    
-    createProgressBar(label, value, max) {
-        const percentage = Math.round((value / max) * 100);
-        const bars = Math.round(percentage / 10);
-        const bar = '█'.repeat(bars) + '░'.repeat(10 - bars);
-        return `${label}: ${bar} ${percentage}%`;
+
+    addCombatStats(embed, userData) {
+        embed.addFields([
+            {
+                name: '⚔️ Combat Level',
+                value: `**Level:** ${userData.level || 1}\n**Experience:** ${userData.experience || 0}\n**Next Level:** ${((userData.level || 1) * 100) - (userData.experience || 0)} XP`,
+                inline: true
+            },
+            {
+                name: '💪 Attributes',
+                value: `**Strength:** ${userData.strength || 10}\n**Defense:** ${userData.defense || 10}\n**Agility:** ${userData.agility || 10}\n**Intelligence:** ${userData.intelligence || 10}`,
+                inline: true
+            },
+            {
+                name: '❤️ Health & Mana',
+                value: `**Health:** ${userData.health || 100}/${userData.maxHealth || 100}\n**Mana:** ${userData.mana || 100}/${userData.maxMana || 100}\n**Regeneration:** +${userData.regen || 1}/min`,
+                inline: true
+            }
+        ]);
     },
-    
-    calculateCoinsPerHour(userData) {
-        // Simplified calculation
-        return Math.round((userData.stats?.totalEarned || 0) / Math.max(this.calculatePlayTime(userData).hours, 1));
+
+    addEconomyStats(embed, userData) {
+        const netWorth = (userData.coins || 0) + (userData.bank?.savings || 0);
+        embed.addFields([
+            {
+                name: '💰 Current Wealth',
+                value: `**Wallet:** ${(userData.coins || 0).toLocaleString()}\n**Bank:** ${(userData.bank?.savings || 0).toLocaleString()}\n**Net Worth:** ${netWorth.toLocaleString()}`,
+                inline: true
+            },
+            {
+                name: '📈 Trading Stats',
+                value: `**Items Sold:** ${userData.statistics?.itemsSold || 0}\n**Items Bought:** ${userData.statistics?.itemsBought || 0}\n**Profit Made:** ${(userData.statistics?.profit || 0).toLocaleString()}`,
+                inline: true
+            },
+            {
+                name: '🎯 Income Sources',
+                value: `**Daily Claims:** ${userData.statistics?.dailyClaims || 0}\n**Work Sessions:** ${userData.statistics?.workSessions || 0}\n**Treasure Found:** ${userData.statistics?.treasureFound || 0}`,
+                inline: true
+            }
+        ]);
     },
-    
-    calculateXpPerDay(userData) {
-        return Math.round((userData.stats?.experience || 0) / Math.max(this.calculatePlayTime(userData).days, 1));
+
+    addActivityStats(embed, userData) {
+        embed.addFields([
+            {
+                name: '📊 Usage Statistics',
+                value: `**Commands Used:** ${userData.statistics?.commandsUsed || 0}\n**Sessions:** ${userData.statistics?.sessions || 0}\n**Average Session:** ${userData.statistics?.avgSession || 0} min`,
+                inline: true
+            },
+            {
+                name: '🔥 Streaks & Consistency',
+                value: `**Daily Streak:** ${userData.dailyStreak || 0} days\n**Longest Streak:** ${userData.statistics?.longestStreak || 0} days\n**Days Active:** ${userData.statistics?.daysActive || 0}`,
+                inline: true
+            },
+            {
+                name: '🎮 Game Activities',
+                value: `**Hunts Completed:** ${userData.statistics?.huntsCompleted || 0}\n**Battles Won:** ${userData.statistics?.battlesWon || 0}\n**Quests Finished:** ${userData.statistics?.questsCompleted || 0}`,
+                inline: true
+            }
+        ]);
     },
-    
-    calculateGrowthRate(userData) {
-        // Simplified growth rate calculation
-        return Math.round(Math.random() * 20 + 80); // 80-100% placeholder
+
+    addAchievementStats(embed, userData) {
+        const achievements = userData.achievements || [];
+        const totalAchievements = 50; // This would be dynamically calculated
+
+        embed.addFields([
+            {
+                name: '🏆 Achievement Progress',
+                value: `**Unlocked:** ${achievements.length}/${totalAchievements}\n**Completion:** ${Math.floor(achievements.length / totalAchievements * 100)}%\n**Points:** ${achievements.length * 10}`,
+                inline: true
+            },
+            {
+                name: '⭐ Recent Achievements',
+                value: achievements.slice(-3).map(a => `• ${a.name}`).join('\n') || 'No achievements yet',
+                inline: true
+            },
+            {
+                name: '🎯 Categories',
+                value: '**Combat:** 2/10\n**Economy:** 3/10\n**Social:** 1/5\n**Exploration:** 4/15',
+                inline: true
+            }
+        ]);
     },
-    
-    async getGlobalRank(userData) {
-        // Placeholder ranking system
-        return Math.floor(Math.random() * 1000) + 1;
-    },
-    
-    async getWealthRank(userData) {
-        return Math.floor(Math.random() * 500) + 1;
-    },
-    
-    async getLevelRank(userData) {
-        return Math.floor(Math.random() * 750) + 1;
-    },
-    
-    getRecentActivity(userData) {
-        return 'Active'; // Placeholder
-    },
-    
-    getCurrentStreak(userData) {
-        return userData.stats?.currentStreak || 0;
-    },
-    
-    getLastActive(userData) {
-        const lastActivity = userData.stats?.lastActive || Date.now();
-        return new Date(lastActivity).toLocaleDateString();
-    },
-    
-    getUpcomingMilestones(userData) {
-        const milestones = [];
-        const stats = userData.stats || {};
-        
-        if ((stats.huntsCompleted || 0) < 50) {
-            milestones.push(`🎯 ${50 - (stats.huntsCompleted || 0)} hunts to Hunt Master`);
-        }
-        
-        if ((stats.battlesWon || 0) < 25) {
-            milestones.push(`⚔️ ${25 - (stats.battlesWon || 0)} battles to Battle Champion`);
-        }
-        
-        return milestones.slice(0, 3);
-    },
-    
-    calculateHuntEfficiency(huntingData) {
-        if (huntingData.completed === 0) return 0;
-        return Math.round((huntingData.success / huntingData.completed) * 100);
-    },
-    
-    getWeeklyHunts(userData) {
-        // Placeholder for weekly hunt count
-        return Math.floor(Math.random() * 20) + 5;
-    },
-    
-    getMonthlyGrowth(userData, category) {
-        // Placeholder for monthly growth percentage
-        return Math.floor(Math.random() * 30) + 10;
-    },
-    
-    getDailyAverage(userData, category) {
-        // Placeholder for daily average
-        return Math.floor(Math.random() * 5) + 1;
-    },
-    
-    async getHuntRank(userData) {
-        return Math.floor(Math.random() * 300) + 1;
-    },
-    
-    async getEarningsRank(userData) {
-        return Math.floor(Math.random() * 400) + 1;
-    },
-    
-    async getStreakRank(userData) {
-        return Math.floor(Math.random() * 200) + 1;
-    },
-    
-    getDifficultyBreakdown(userData) {
-        // Placeholder difficulty breakdown
-        const total = userData.stats?.huntsCompleted || 0;
-        return {
-            easy: Math.floor(total * 0.4),
-            medium: Math.floor(total * 0.3),
-            hard: Math.floor(total * 0.2),
-            expert: Math.floor(total * 0.1)
-        };
-    },
-    
-    // Placeholder methods for other stat categories
-    async showCombatStats(interaction, userData, targetUser, isOwnStats) {
-        const embed = new EmbedBuilder()
-            .setColor(config.embedColors.error)
-            .setTitle(`⚔️ ${targetUser.displayName}'s Combat Statistics`)
-            .setDescription('Combat statistics coming soon!')
-            .addFields([
-                { name: '🎯 Battles Won', value: `${userData.stats?.battlesWon || 0}`, inline: true }
-            ]);
-        await interaction.reply({ embeds: [embed] });
-    },
-    
-    async showEconomyStats(interaction, userData, targetUser, isOwnStats) {
-        const embed = new EmbedBuilder()
-            .setColor(config.embedColors.success)
-            .setTitle(`💰 ${targetUser.displayName}'s Economy Statistics`)
-            .setDescription('Economy statistics coming soon!')
-            .addFields([
-                { name: '💰 Total Earned', value: `${userData.stats?.totalEarned || 0} coins`, inline: true }
-            ]);
-        await interaction.reply({ embeds: [embed] });
-    },
-    
-    async showExplorationStats(interaction, userData, targetUser, isOwnStats) {
-        const embed = new EmbedBuilder()
-            .setColor(config.embedColors.info)
-            .setTitle(`🗺️ ${targetUser.displayName}'s Exploration Statistics`)
-            .setDescription('Exploration statistics coming soon!');
-        await interaction.reply({ embeds: [embed] });
-    },
-    
-    async showMagicStats(interaction, userData, targetUser, isOwnStats) {
-        const embed = new EmbedBuilder()
-            .setColor(0x9370DB)
-            .setTitle(`🔮 ${targetUser.displayName}'s Magic Statistics`)
-            .setDescription('Magic statistics coming soon!');
-        await interaction.reply({ embeds: [embed] });
-    },
-    
-    async showSocialStats(interaction, userData, targetUser, isOwnStats) {
-        const embed = new EmbedBuilder()
-            .setColor(config.embedColors.info)
-            .setTitle(`👥 ${targetUser.displayName}'s Social Statistics`)
-            .setDescription('Social statistics coming soon!');
-        await interaction.reply({ embeds: [embed] });
-    },
-    
-    async showAchievementStats(interaction, userData, targetUser, isOwnStats) {
-        const embed = new EmbedBuilder()
-            .setColor(config.embedColors.profile)
-            .setTitle(`🏆 ${targetUser.displayName}'s Achievement Statistics`)
-            .setDescription('Achievement statistics coming soon!')
-            .addFields([
-                { name: '🏅 Total Achievements', value: `${userData.achievements?.length || 0}`, inline: true }
-            ]);
-        await interaction.reply({ embeds: [embed] });
+
+    addProgressStats(embed, userData) {
+        embed.addFields([
+            {
+                name: '📈 Level Progression',
+                value: `**Current Level:** ${userData.level || 1}\n**Total XP:** ${userData.experience || 0}\n**XP to Next:** ${((userData.level || 1) * 100) - (userData.experience || 0)}`,
+                inline: true
+            },
+            {
+                name: '🛠️ Skill Levels',
+                value: `**Mining:** ${userData.skills?.mining || 1}\n**Fishing:** ${userData.skills?.fishing || 1}\n**Combat:** ${userData.skills?.combat || 1}\n**Crafting:** ${userData.skills?.crafting || 1}`,
+                inline: true
+            },
+            {
+                name: '📊 Growth Rate',
+                value: `**XP/Day:** ${userData.statistics?.xpPerDay || 0}\n**Level Gains:** ${userData.statistics?.levelsGained || 0}\n**Skill Points:** ${userData.statistics?.skillPoints || 0}`,
+                inline: true
+            }
+        ]);
     }
 };

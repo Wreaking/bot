@@ -408,5 +408,140 @@ module.exports = {
             special: 0xFFB6C1
         };
         return colors[category] || 0x808080;
+    },
+
+    // Enhanced button handlers for achievements
+    buttonHandlers: {
+        async claim_all(interaction) {
+            const userId = interaction.user.id;
+            const userData = await db.getPlayer(userId) || { achievements: [], coins: 0 };
+            const userAchievements = userData.achievements || [];
+
+            // Find unclaimed achievements
+            const unclaimedRewards = userAchievements.filter(ach => !ach.claimed);
+            
+            if (unclaimedRewards.length === 0) {
+                return await interaction.reply({
+                    content: '✅ You have already claimed all available rewards!',
+                    ephemeral: true
+                });
+            }
+
+            const totalReward = unclaimedRewards.reduce((total, ach) => {
+                const achData = this.findAchievementData(ach.id);
+                return total + (achData ? achData.reward : 0);
+            }, 0);
+
+            // Mark achievements as claimed and add rewards
+            userAchievements.forEach(ach => { ach.claimed = true; });
+            
+            await db.updatePlayer(userId, {
+                achievements: userAchievements,
+                coins: userData.coins + totalReward
+            });
+
+            const embed = new EmbedBuilder()
+                .setColor(config.embedColors?.success || '#00FF00')
+                .setTitle('🎉 Rewards Claimed!')
+                .setDescription(`You've claimed **${totalReward}** coins from **${unclaimedRewards.length}** achievements!`)
+                .addFields([
+                    { name: '💰 New Balance', value: `${userData.coins + totalReward} coins`, inline: true },
+                    { name: '🏆 Achievements Claimed', value: `${unclaimedRewards.length}`, inline: true }
+                ])
+                .setTimestamp();
+
+            await interaction.reply({ embeds: [embed] });
+        },
+
+        async progress(interaction) {
+            const userId = interaction.user.id;
+            const userData = await db.getPlayer(userId) || {};
+            
+            // Calculate detailed progress
+            const progressEmbed = new EmbedBuilder()
+                .setColor(config.embedColors?.info || '#0099ff')
+                .setTitle('📈 Achievement Progress Tracker')
+                .setDescription('Track your progress towards unlocking achievements!');
+
+            // Add progress bars for each category
+            const categories = Object.keys(achievements);
+            const progressData = categories.map(category => {
+                const categoryAchievements = achievements[category];
+                const unlocked = userData.achievements?.filter(ach => 
+                    categoryAchievements.some(catAch => catAch.id === ach.id)
+                ).length || 0;
+                
+                const progress = Math.round((unlocked / categoryAchievements.length) * 20);
+                const progressBar = '█'.repeat(progress) + '░'.repeat(20 - progress);
+                
+                return {
+                    name: `${this.getCategoryEmoji(category)} ${this.getCategoryName(category)}`,
+                    value: `${progressBar} ${unlocked}/${categoryAchievements.length} (${Math.round((unlocked / categoryAchievements.length) * 100)}%)`,
+                    inline: false
+                };
+            });
+
+            progressEmbed.addFields(progressData);
+            
+            await interaction.reply({ embeds: [progressEmbed], ephemeral: true });
+        },
+
+        async leaderboard(interaction) {
+            // This would show the achievement leaderboard
+            const embed = new EmbedBuilder()
+                .setColor(config.embedColors?.info || '#0099ff')
+                .setTitle('🏆 Achievement Leaderboard')
+                .setDescription('Top achievement hunters on this server!')
+                .addFields([
+                    { name: '🥇 1st Place', value: 'Coming Soon!', inline: true },
+                    { name: '🥈 2nd Place', value: 'Coming Soon!', inline: true },
+                    { name: '🥉 3rd Place', value: 'Coming Soon!', inline: true }
+                ])
+                .setFooter({ text: 'Leaderboard updates every hour' });
+
+            await interaction.reply({ embeds: [embed], ephemeral: true });
+        },
+
+        async guide(interaction) {
+            const embed = new EmbedBuilder()
+                .setColor(config.embedColors?.info || '#0099ff')
+                .setTitle('📖 Achievement Guide')
+                .setDescription('**How to unlock achievements and maximize your rewards!**')
+                .addFields([
+                    {
+                        name: '🏴‍☠️ Treasure Hunting Tips',
+                        value: '• Use `/hunt` regularly to find treasures\n• Complete daily treasure hunts\n• Solve riddles for bonus rewards',
+                        inline: false
+                    },
+                    {
+                        name: '⚔️ Combat Achievements',
+                        value: '• Challenge other players with `/battle`\n• Join arena tournaments\n• Complete dungeon raids',
+                        inline: false
+                    },
+                    {
+                        name: '💰 Wealth Building',
+                        value: '• Use `/daily` for consistent income\n• Invest wisely with `/invest`\n• Trade in the marketplace',
+                        inline: false
+                    },
+                    {
+                        name: '🎯 Pro Tips',
+                        value: '• Check achievements daily for new unlocks\n• Focus on one category at a time\n• Join a guild for social achievements',
+                        inline: false
+                    }
+                ])
+                .setFooter({ text: 'More detailed guides available in each category!' });
+
+            await interaction.reply({ embeds: [embed], ephemeral: true });
+        }
+    },
+
+    // Enhanced select menu handlers
+    selectMenuHandlers: {
+        async category_select(interaction) {
+            const selectedValue = interaction.values[0];
+            const category = selectedValue.replace('achievements_', '');
+            
+            await this.showCategoryAchievements(interaction, category);
+        }
     }
 };

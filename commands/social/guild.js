@@ -1,459 +1,619 @@
+
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require('discord.js');
 const config = require('../../config.js');
-const db = require('../../database.js');
+const { db } = require('../../database.js');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('guild')
-        .setDescription('👥 Create or manage your adventurer guild!')
-        .addStringOption(option =>
-            option.setName('action')
-                .setDescription('Choose guild action')
-                .setRequired(false)
-                .addChoices(
-                    { name: '🏠 View My Guild', value: 'view' },
-                    { name: '🆕 Create Guild', value: 'create' },
-                    { name: '🔍 Search Guilds', value: 'search' },
-                    { name: '📨 Join Request', value: 'join' },
-                    { name: '👑 Manage Guild', value: 'manage' },
-                    { name: '📊 Guild Stats', value: 'stats' }
-                ))
-        .addStringOption(option =>
-            option.setName('guild')
-                .setDescription('Guild name for specific actions')
-                .setRequired(false))
-        .addStringOption(option =>
-            option.setName('member')
-                .setDescription('Member to manage (for leaders)')
-                .setRequired(false)),
-    
+        .setDescription('🏰 Manage your treasure hunter guild!')
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('create')
+                .setDescription('Create a new guild')
+                .addStringOption(option =>
+                    option.setName('name')
+                        .setDescription('Guild name')
+                        .setRequired(true)
+                        .setMaxLength(50))
+                .addStringOption(option =>
+                    option.setName('description')
+                        .setDescription('Guild description')
+                        .setRequired(false)
+                        .setMaxLength(200)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('info')
+                .setDescription('View guild information')
+                .addStringOption(option =>
+                    option.setName('guild')
+                        .setDescription('Guild to view (leave empty for your guild)')
+                        .setRequired(false)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('join')
+                .setDescription('Join a guild')
+                .addStringOption(option =>
+                    option.setName('guild')
+                        .setDescription('Guild name or ID')
+                        .setRequired(true)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('leave')
+                .setDescription('Leave your current guild'))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('manage')
+                .setDescription('Manage guild settings (officers only)'))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('list')
+                .setDescription('List all guilds on this server')),
+
     async execute(interaction) {
-        const action = interaction.options?.getString('action') || 'view';
-        const guildName = interaction.options?.getString('guild');
-        const memberName = interaction.options?.getString('member');
-        const userId = interaction.user.id;
-        
-        switch (action) {
-            case 'create':
-                await this.createGuild(interaction, guildName);
-                break;
-            case 'search':
-                await this.searchGuilds(interaction);
-                break;
-            case 'join':
-                await this.joinGuild(interaction, guildName);
-                break;
-            case 'manage':
-                await this.manageGuild(interaction);
-                break;
-            case 'stats':
-                await this.showGuildStats(interaction);
-                break;
-            default:
-                await this.viewGuild(interaction);
-        }
-    },
-    
-    async viewGuild(interaction) {
-        const userId = interaction.user.id;
-        const userData = await db.getUser(userId) || {};
-        
-        if (!userData.guild) {
-            const embed = new EmbedBuilder()
-                .setColor(config.embedColors.info)
-                .setTitle('👥 Guild System')
-                .setDescription('**You\'re not in a guild yet!**\n\nGuilds are communities of adventurers who work together to achieve great things.')
-                .addFields([
-                    {
-                        name: '🌟 Guild Benefits',
-                        value: '• Shared guild treasury and resources\n• Group expeditions and raids\n• Guild chat and communication\n• Exclusive guild quests and rewards\n• Social rankings and competitions',
-                        inline: true
-                    },
-                    {
-                        name: '🏗️ Guild Features',
-                        value: '• Create your own guild (1000 coins)\n• Join existing guilds\n• Guild leveling system\n• Member roles and permissions\n• Guild vs Guild competitions',
-                        inline: true
-                    },
-                    {
-                        name: '👑 Leadership Roles',
-                        value: '• **Leader**: Full guild control\n• **Officer**: Moderate permissions\n• **Member**: Basic guild access\n• **Recruit**: Limited access',
-                        inline: true
-                    }
-                ])
-                .setFooter({ text: 'Use the buttons below to get started!' });
-                
-            const buttons = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId('guild_search')
-                        .setLabel('🔍 Find Guilds')
-                        .setStyle(ButtonStyle.Primary),
-                    new ButtonBuilder()
-                        .setCustomId('guild_create')
-                        .setLabel('🆕 Create Guild')
-                        .setStyle(ButtonStyle.Success),
-                    new ButtonBuilder()
-                        .setCustomId('guild_guide')
-                        .setLabel('📖 Guild Guide')
-                        .setStyle(ButtonStyle.Secondary)
-                );
-                
-            return interaction.reply({ embeds: [embed], components: [buttons] });
-        }
-        
-        // User is in a guild - show guild info
-        const guildData = await this.getGuildData(userData.guild.id);
-        
-        if (!guildData) {
-            return interaction.reply({
-                content: '❌ Guild data not found! You may need to leave and rejoin a guild.',
+        const subcommand = interaction.options.getSubcommand();
+
+        try {
+            switch (subcommand) {
+                case 'create':
+                    await this.handleCreate(interaction);
+                    break;
+                case 'info':
+                    await this.handleInfo(interaction);
+                    break;
+                case 'join':
+                    await this.handleJoin(interaction);
+                    break;
+                case 'leave':
+                    await this.handleLeave(interaction);
+                    break;
+                case 'manage':
+                    await this.handleManage(interaction);
+                    break;
+                case 'list':
+                    await this.handleList(interaction);
+                    break;
+            }
+        } catch (error) {
+            console.error('Guild command error:', error);
+            await interaction.reply({
+                content: '❌ An error occurred while processing your guild request.',
                 ephemeral: true
             });
         }
-        
-        const embed = new EmbedBuilder()
-            .setColor(config.embedColors.info)
-            .setTitle(`🏛️ ${guildData.name}`)
-            .setDescription(`**${guildData.description || 'A guild of brave adventurers'}**`)
-            .setThumbnail(guildData.icon || 'https://cdn.discordapp.com/emojis/742747860554686485.png')
-            .addFields([
-                {
-                    name: '📊 Guild Information',
-                    value: `👑 Leader: **${guildData.leader.name}**\n📅 Founded: ${new Date(guildData.founded).toLocaleDateString()}\n⭐ Level: **${guildData.level || 1}**\n🏆 Rank: **#${guildData.rank || 'Unranked'}**`,
-                    inline: true
-                },
-                {
-                    name: '👥 Membership',
-                    value: `👥 Members: **${guildData.members.length}/${guildData.maxMembers || 20}**\n🆕 Recruits: **${guildData.members.filter(m => m.role === 'recruit').length}**\n⚔️ Officers: **${guildData.members.filter(m => m.role === 'officer').length}**`,
-                    inline: true
-                },
-                {
-                    name: '💰 Guild Treasury',
-                    value: `💰 Coins: **${guildData.treasury || 0}**\n📦 Items: **${guildData.items?.length || 0}**\n🎁 Weekly Contribution: **${guildData.weeklyContribution || 0}**`,
-                    inline: true
-                },
-                {
-                    name: '🎯 Your Role',
-                    value: `📋 Position: **${userData.guild.role.toUpperCase()}**\n🤝 Joined: ${new Date(userData.guild.joinDate).toLocaleDateString()}\n🎁 Contributions: **${userData.guild.totalContributions || 0}** coins`,
-                    inline: true
-                },
-                {
-                    name: '🏆 Guild Achievements',
-                    value: `🗺️ Group Hunts: **${guildData.stats?.groupHunts || 0}**\n⚔️ Raids Completed: **${guildData.stats?.raidsCompleted || 0}**\n🏰 Dungeons Cleared: **${guildData.stats?.dungeonsCleared || 0}**`,
-                    inline: true
-                },
-                {
-                    name: '📈 Activity Level',
-                    value: `📊 Activity: **${this.getActivityLevel(guildData)}**\n🔥 Weekly Score: **${guildData.weeklyScore || 0}**\n📅 Last Active: ${guildData.lastActivity ? new Date(guildData.lastActivity).toLocaleDateString() : 'Unknown'}`,
-                    inline: true
-                }
-            ]);
-            
-        // Add recent members list
-        const activeMembers = guildData.members
-            .filter(member => member.lastActive > Date.now() - 7 * 24 * 60 * 60 * 1000)
-            .slice(0, 8)
-            .map(member => `${this.getRoleEmoji(member.role)} ${member.name}`)
-            .join('\n');
-            
-        if (activeMembers) {
-            embed.addFields([
-                { name: '👥 Active Members (Last 7 days)', value: activeMembers, inline: false }
-            ]);
-        }
-        
-        const buttons = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId('guild_members')
-                    .setLabel('👥 View All Members')
-                    .setStyle(ButtonStyle.Primary),
-                new ButtonBuilder()
-                    .setCustomId('guild_activities')
-                    .setLabel('🎯 Guild Activities')
-                    .setStyle(ButtonStyle.Success),
-                new ButtonBuilder()
-                    .setCustomId('guild_contribute')
-                    .setLabel('💰 Contribute')
-                    .setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder()
-                    .setCustomId('guild_chat')
-                    .setLabel('💬 Guild Chat')
-                    .setStyle(ButtonStyle.Secondary)
-            );
-            
-        // Add management button for officers and leaders
-        if (['leader', 'officer'].includes(userData.guild.role)) {
-            const manageButton = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId('guild_manage')
-                        .setLabel('⚙️ Manage Guild')
-                        .setStyle(ButtonStyle.Danger),
-                    new ButtonBuilder()
-                        .setCustomId('guild_promote')
-                        .setLabel('📈 Promote Members')
-                        .setStyle(ButtonStyle.Success),
-                    new ButtonBuilder()
-                        .setCustomId('guild_kick')
-                        .setLabel('👋 Manage Members')
-                        .setStyle(ButtonStyle.Secondary)
-                );
-            
-            await interaction.reply({ embeds: [embed], components: [buttons, manageButton] });
-        } else {
-            await interaction.reply({ embeds: [embed], components: [buttons] });
-        }
     },
-    
-    async createGuild(interaction, guildName) {
-        const userId = interaction.user.id;
-        const userData = await db.getUser(userId) || { inventory: { coins: 0 } };
+
+    async handleCreate(interaction) {
+        const guildName = interaction.options.getString('name');
+        const description = interaction.options.getString('description') || 'A new treasure hunting guild';
         
-        // Check if user is already in a guild
-        if (userData.guild) {
-            return interaction.reply({
+        const userData = await db.getPlayer(interaction.user.id);
+        if (userData?.guild) {
+            return await interaction.reply({
                 content: '❌ You\'re already in a guild! Leave your current guild first.',
                 ephemeral: true
             });
         }
-        
-        const creationCost = 1000;
-        if ((userData.inventory.coins || 0) < creationCost) {
-            return interaction.reply({
-                content: `❌ You need ${creationCost} coins to create a guild! You have ${userData.inventory.coins || 0} coins.`,
+
+        const creationCost = 10000;
+        if ((userData?.coins || 0) < creationCost) {
+            return await interaction.reply({
+                content: `❌ You need ${creationCost.toLocaleString()} coins to create a guild! (You have ${(userData?.coins || 0).toLocaleString()})`,
                 ephemeral: true
             });
         }
-        
-        if (!guildName) {
-            const embed = new EmbedBuilder()
-                .setColor(config.embedColors.info)
-                .setTitle('🆕 Create Your Guild')
-                .setDescription('**Start your own adventuring guild!**')
-                .addFields([
-                    {
-                        name: '💰 Creation Cost',
-                        value: `${creationCost} coins`,
-                        inline: true
-                    },
-                    {
-                        name: '💳 Your Balance',
-                        value: `${userData.inventory.coins || 0} coins`,
-                        inline: true
-                    },
-                    {
-                        name: '📋 Requirements',
-                        value: '• Unique guild name (3-30 characters)\n• Guild description\n• Initial treasury deposit',
-                        inline: false
-                    }
-                ])
-                .setFooter({ text: 'Use /guild create <name> to start!' });
-                
-            return interaction.reply({ embeds: [embed] });
-        }
-        
-        // Validate guild name
-        if (guildName.length < 3 || guildName.length > 30) {
-            return interaction.reply({
-                content: '❌ Guild name must be between 3 and 30 characters!',
-                ephemeral: true
-            });
-        }
-        
-        // Check if guild name is taken
-        const existingGuild = await this.findGuildByName(guildName);
-        if (existingGuild) {
-            return interaction.reply({
-                content: '❌ A guild with that name already exists! Choose a different name.',
-                ephemeral: true
-            });
-        }
-        
-        // Create the guild
-        const guildId = this.generateGuildId();
-        const newGuild = {
-            id: guildId,
+
+        // Create guild
+        const guild = {
+            id: `guild_${Date.now()}_${interaction.user.id}`,
             name: guildName,
-            description: `${guildName} - A guild of brave adventurers`,
-            leader: {
-                id: userId,
-                name: interaction.user.displayName
-            },
-            members: [{
-                id: userId,
-                name: interaction.user.displayName,
-                role: 'leader',
-                joinDate: Date.now(),
-                lastActive: Date.now(),
-                contributions: 0
-            }],
-            founded: Date.now(),
+            description,
+            owner: interaction.user.id,
+            members: [interaction.user.id],
+            officers: [interaction.user.id],
             level: 1,
+            experience: 0,
             treasury: 0,
-            maxMembers: 10,
-            isPublic: true,
-            stats: {
-                groupHunts: 0,
-                raidsCompleted: 0,
-                dungeonsCleared: 0
-            }
+            created: Date.now(),
+            settings: {
+                joinRequests: true,
+                publicProfile: true,
+                autoAccept: false
+            },
+            perks: [],
+            activities: []
         };
-        
-        // Deduct creation cost and add guild to user
-        userData.inventory.coins -= creationCost;
-        userData.guild = {
-            id: guildId,
-            role: 'leader',
-            joinDate: Date.now(),
-            totalContributions: 0
-        };
-        
-        await db.setUser(userId, userData);
-        await this.saveGuildData(guildId, newGuild);
-        
+
+        // Save guild and update user
+        await db.createGuild(guild);
+        await db.updatePlayer(interaction.user.id, {
+            coins: userData.coins - creationCost,
+            guild: guild.id,
+            guildRole: 'owner'
+        });
+
         const embed = new EmbedBuilder()
-            .setColor(config.embedColors.success)
-            .setTitle('🎉 Guild Created Successfully!')
-            .setDescription(`**${guildName}** has been founded!`)
+            .setColor(config.embedColors?.success || '#00FF00')
+            .setTitle('🏰 Guild Created Successfully!')
+            .setDescription(`**${guildName}** has been established!`)
             .addFields([
-                { name: '🏛️ Guild Name', value: guildName, inline: true },
-                { name: '👑 Leader', value: interaction.user.displayName, inline: true },
-                { name: '💰 Cost', value: `${creationCost} coins`, inline: true },
-                { name: '📈 Next Steps', value: '• Invite members to join\n• Set guild description\n• Start group activities\n• Build your treasury', inline: false }
+                { name: '👑 Guild Master', value: `<@${interaction.user.id}>`, inline: true },
+                { name: '📝 Description', value: description, inline: true },
+                { name: '💰 Treasury', value: '0 coins', inline: true },
+                { name: '👥 Members', value: '1/50', inline: true },
+                { name: '⭐ Level', value: '1', inline: true },
+                { name: '🎯 Next Goal', value: 'Recruit 5 members', inline: true }
             ])
-            .setThumbnail(interaction.user.displayAvatarURL())
+            .setFooter({ text: 'Use /guild manage to configure your guild settings' })
             .setTimestamp();
-            
+
         const buttons = new ActionRowBuilder()
             .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('guild_manage')
+                    .setLabel('⚙️ Manage Guild')
+                    .setStyle(ButtonStyle.Primary),
                 new ButtonBuilder()
                     .setCustomId('guild_invite')
                     .setLabel('📨 Invite Members')
-                    .setStyle(ButtonStyle.Primary),
+                    .setStyle(ButtonStyle.Success),
                 new ButtonBuilder()
-                    .setCustomId('guild_settings')
-                    .setLabel('⚙️ Guild Settings')
-                    .setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder()
-                    .setCustomId('guild_view')
-                    .setLabel('🏠 View Guild')
-                    .setStyle(ButtonStyle.Success)
+                    .setCustomId('guild_info')
+                    .setLabel('ℹ️ Guild Info')
+                    .setStyle(ButtonStyle.Secondary)
             );
-            
-        await interaction.reply({ embeds: [embed], components: [buttons] });
+
+        await interaction.reply({
+            embeds: [embed],
+            components: [buttons]
+        });
     },
-    
-    async searchGuilds(interaction) {
-        const guilds = await this.getAllPublicGuilds();
+
+    async handleInfo(interaction) {
+        const guildName = interaction.options.getString('guild');
         
-        if (guilds.length === 0) {
-            return interaction.reply({
-                content: '❌ No public guilds found! Be the first to create one.',
+        let guildData;
+        if (guildName) {
+            guildData = await db.getGuildByName(guildName);
+        } else {
+            const userData = await db.getPlayer(interaction.user.id);
+            if (!userData?.guild) {
+                return await interaction.reply({
+                    content: '❌ You\'re not in a guild! Use `/guild list` to find guilds to join.',
+                    ephemeral: true
+                });
+            }
+            guildData = await db.getGuild(userData.guild);
+        }
+
+        if (!guildData) {
+            return await interaction.reply({
+                content: '❌ Guild not found!',
                 ephemeral: true
             });
         }
-        
+
+        const members = await Promise.all(
+            guildData.members.slice(0, 10).map(async id => {
+                try {
+                    const user = await interaction.client.users.fetch(id);
+                    const memberData = await db.getPlayer(id);
+                    return {
+                        user,
+                        role: guildData.officers.includes(id) ? (id === guildData.owner ? 'Owner' : 'Officer') : 'Member',
+                        level: memberData?.level || 1
+                    };
+                } catch {
+                    return null;
+                }
+            })
+        );
+
+        const validMembers = members.filter(m => m !== null);
+
         const embed = new EmbedBuilder()
-            .setColor(config.embedColors.info)
-            .setTitle('🔍 Available Guilds')
-            .setDescription(`**${guilds.length} public guilds recruiting members**`)
-            .setThumbnail('https://cdn.discordapp.com/emojis/742747860554686485.png');
-            
-        guilds.slice(0, 10).forEach((guild, index) => {
-            const memberCount = guild.members.length;
-            const maxMembers = guild.maxMembers || 20;
-            const activityLevel = this.getActivityLevel(guild);
-            
+            .setColor(config.embedColors?.guild || '#8B008B')
+            .setTitle(`🏰 ${guildData.name}`)
+            .setDescription(guildData.description)
+            .addFields([
+                {
+                    name: '📊 Guild Statistics',
+                    value: `**Level:** ${guildData.level}\n**Experience:** ${guildData.experience}\n**Members:** ${guildData.members.length}/50\n**Treasury:** ${guildData.treasury.toLocaleString()} coins`,
+                    inline: true
+                },
+                {
+                    name: '👑 Leadership',
+                    value: `**Owner:** <@${guildData.owner}>\n**Officers:** ${guildData.officers.length}\n**Created:** ${new Date(guildData.created).toLocaleDateString()}`,
+                    inline: true
+                },
+                {
+                    name: '🎯 Guild Perks',
+                    value: guildData.perks.length > 0 ? 
+                        guildData.perks.slice(0, 3).map(perk => `• ${perk.name}`).join('\n') :
+                        'No perks unlocked yet',
+                    inline: true
+                }
+            ]);
+
+        if (validMembers.length > 0) {
             embed.addFields([{
-                name: `${index + 1}. 🏛️ ${guild.name}`,
-                value: `👑 Leader: **${guild.leader.name}**\n` +
-                       `👥 Members: **${memberCount}/${maxMembers}**\n` +
-                       `⭐ Level: **${guild.level || 1}**\n` +
-                       `📊 Activity: **${activityLevel}**\n` +
-                       `📝 ${guild.description || 'No description'}`,
-                inline: true
+                name: '👥 Recent Members',
+                value: validMembers.slice(0, 8).map(m => 
+                    `${m.user.displayName} (Lv.${m.level}) - *${m.role}*`
+                ).join('\n'),
+                inline: false
             }]);
-        });
+        }
+
+        const buttons = new ActionRowBuilder();
+        const userData = await db.getPlayer(interaction.user.id);
         
-        const guildSelect = new StringSelectMenuBuilder()
-            .setCustomId('guild_join_select')
-            .setPlaceholder('🏛️ Select a guild to join...')
-            .addOptions(
-                guilds.slice(0, 25).map((guild, index) => ({
-                    label: guild.name,
-                    description: `${guild.members.length}/${guild.maxMembers} members • Level ${guild.level || 1}`,
-                    value: `join_${guild.id}`,
-                    emoji: '🏛️'
-                }))
-            );
-            
-        const buttons = new ActionRowBuilder()
-            .addComponents(
+        if (userData?.guild === guildData.id) {
+            // User is in this guild
+            buttons.addComponents(
                 new ButtonBuilder()
-                    .setCustomId('guild_create')
-                    .setLabel('🆕 Create Own Guild')
-                    .setStyle(ButtonStyle.Success),
+                    .setCustomId('guild_manage')
+                    .setLabel('⚙️ Manage')
+                    .setStyle(ButtonStyle.Primary)
+                    .setDisabled(!guildData.officers.includes(interaction.user.id)),
                 new ButtonBuilder()
-                    .setCustomId('guild_refresh')
-                    .setLabel('🔄 Refresh List')
+                    .setCustomId('guild_members')
+                    .setLabel('👥 Members')
+                    .setStyle(ButtonStyle.Secondary),
+                new ButtonBuilder()
+                    .setCustomId('guild_activities')
+                    .setLabel('📜 Activities')
                     .setStyle(ButtonStyle.Secondary)
             );
+        } else if (!userData?.guild) {
+            // User can join
+            buttons.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`guild_join_${guildData.id}`)
+                    .setLabel('📥 Request to Join')
+                    .setStyle(ButtonStyle.Success)
+                    .setDisabled(!guildData.settings.joinRequests)
+            );
+        }
+
+        buttons.addComponents(
+            new ButtonBuilder()
+                .setCustomId('guild_refresh')
+                .setLabel('🔄 Refresh')
+                .setStyle(ButtonStyle.Secondary)
+        );
+
+        await interaction.reply({
+            embeds: [embed],
+            components: [buttons]
+        });
+    },
+
+    async handleManage(interaction) {
+        const userData = await db.getPlayer(interaction.user.id);
+        if (!userData?.guild) {
+            return await interaction.reply({
+                content: '❌ You\'re not in a guild!',
+                ephemeral: true
+            });
+        }
+
+        const guildData = await db.getGuild(userData.guild);
+        if (!guildData.officers.includes(interaction.user.id)) {
+            return await interaction.reply({
+                content: '❌ Only guild officers can manage guild settings!',
+                ephemeral: true
+            });
+        }
+
+        const embed = new EmbedBuilder()
+            .setColor(config.embedColors?.guild || '#8B008B')
+            .setTitle(`⚙️ Managing ${guildData.name}`)
+            .setDescription('Select a management option:')
+            .addFields([
+                {
+                    name: '👥 Member Management',
+                    value: 'Invite, promote, or kick members',
+                    inline: true
+                },
+                {
+                    name: '🏛️ Treasury',
+                    value: `Current: ${guildData.treasury.toLocaleString()} coins`,
+                    inline: true
+                },
+                {
+                    name: '⚙️ Settings',
+                    value: 'Configure guild preferences',
+                    inline: true
+                }
+            ]);
+
+        const managementSelect = new StringSelectMenuBuilder()
+            .setCustomId('guild_manage_select')
+            .setPlaceholder('Choose a management option...')
+            .addOptions([
+                {
+                    label: '👥 Member Management',
+                    value: 'members',
+                    description: 'Manage guild members and roles',
+                    emoji: '👥'
+                },
+                {
+                    label: '💰 Treasury Management',
+                    value: 'treasury',
+                    description: 'Manage guild funds and donations',
+                    emoji: '💰'
+                },
+                {
+                    label: '⚙️ Guild Settings',
+                    value: 'settings',
+                    description: 'Configure guild preferences',
+                    emoji: '⚙️'
+                },
+                {
+                    label: '📜 Activity Log',
+                    value: 'activities',
+                    description: 'View recent guild activities',
+                    emoji: '📜'
+                },
+                {
+                    label: '🎯 Guild Perks',
+                    value: 'perks',
+                    description: 'Manage guild perks and upgrades',
+                    emoji: '🎯'
+                }
+            ]);
+
+        await interaction.reply({
+            embeds: [embed],
+            components: [new ActionRowBuilder().addComponents(managementSelect)],
+            ephemeral: true
+        });
+    },
+
+    // Button handlers
+    buttonHandlers: {
+        async manage(interaction) {
+            await module.exports.handleManage(interaction);
+        },
+
+        async invite(interaction) {
+            await interaction.reply({
+                content: '📨 **Guild Invitation System**\n\nTo invite someone to your guild:\n1. Ask them to use `/guild join [guild_name]`\n2. Or use the member management system in `/guild manage`\n\n*Direct invitation system coming soon!*',
+                ephemeral: true
+            });
+        },
+
+        async info(interaction) {
+            const userData = await db.getPlayer(interaction.user.id);
+            if (userData?.guild) {
+                const newInteraction = {
+                    ...interaction,
+                    options: { getString: () => null }
+                };
+                await module.exports.handleInfo(newInteraction);
+            } else {
+                await interaction.reply({
+                    content: '❌ You\'re not in a guild!',
+                    ephemeral: true
+                });
+            }
+        },
+
+        async members(interaction) {
+            const userData = await db.getPlayer(interaction.user.id);
+            const guildData = await db.getGuild(userData.guild);
             
-        const components = [
-            new ActionRowBuilder().addComponents(guildSelect),
-            buttons
-        ];
+            if (!guildData) {
+                return await interaction.reply({
+                    content: '❌ Guild not found!',
+                    ephemeral: true
+                });
+            }
+
+            const members = await Promise.all(
+                guildData.members.map(async id => {
+                    try {
+                        const user = await interaction.client.users.fetch(id);
+                        const memberData = await db.getPlayer(id);
+                        return {
+                            user,
+                            role: guildData.officers.includes(id) ? (id === guildData.owner ? 'Owner 👑' : 'Officer ⭐') : 'Member 👤',
+                            level: memberData?.level || 1,
+                            lastActive: memberData?.lastActive || 0
+                        };
+                    } catch {
+                        return null;
+                    }
+                })
+            );
+
+            const validMembers = members.filter(m => m !== null);
+
+            const embed = new EmbedBuilder()
+                .setColor(config.embedColors?.guild || '#8B008B')
+                .setTitle(`👥 ${guildData.name} Members (${validMembers.length}/50)`)
+                .setDescription(validMembers.map(m => 
+                    `${m.role} ${m.user.displayName} (Lv.${m.level})`
+                ).join('\n') || 'No members found')
+                .setFooter({ text: 'Officers can manage members through /guild manage' });
+
+            await interaction.reply({ embeds: [embed], ephemeral: true });
+        },
+
+        async activities(interaction) {
+            const userData = await db.getPlayer(interaction.user.id);
+            const guildData = await db.getGuild(userData.guild);
+
+            const embed = new EmbedBuilder()
+                .setColor(config.embedColors?.guild || '#8B008B')
+                .setTitle(`📜 ${guildData.name} Activity Log`)
+                .setDescription(guildData.activities?.slice(-10).map(activity => 
+                    `${new Date(activity.timestamp).toLocaleString()} - ${activity.description}`
+                ).join('\n') || 'No recent activities')
+                .setFooter({ text: 'Last 10 activities shown' });
+
+            await interaction.reply({ embeds: [embed], ephemeral: true });
+        },
+
+        async refresh(interaction) {
+            await module.exports.handleInfo(interaction);
+        }
+    },
+
+    // Select menu handlers
+    selectMenuHandlers: {
+        async manage_select(interaction) {
+            const option = interaction.values[0];
+            
+            switch (option) {
+                case 'members':
+                    await this.handleMemberManagement(interaction);
+                    break;
+                case 'treasury':
+                    await this.handleTreasuryManagement(interaction);
+                    break;
+                case 'settings':
+                    await this.handleSettingsManagement(interaction);
+                    break;
+                case 'activities':
+                    await this.buttonHandlers.activities(interaction);
+                    break;
+                case 'perks':
+                    await this.handlePerksManagement(interaction);
+                    break;
+            }
+        }
+    },
+
+    async handleMemberManagement(interaction) {
+        await interaction.reply({
+            content: '👥 **Member Management Panel**\n\n• Use `/guild info` to view current members\n• Member promotion/demotion system in development\n• Kick functionality coming soon\n\n*Advanced member management tools will be available in the next update!*',
+            ephemeral: true
+        });
+    },
+
+    async handleTreasuryManagement(interaction) {
+        const userData = await db.getPlayer(interaction.user.id);
+        const guildData = await db.getGuild(userData.guild);
+
+        const embed = new EmbedBuilder()
+            .setColor(config.embedColors?.guild || '#8B008B')
+            .setTitle('💰 Guild Treasury Management')
+            .addFields([
+                { name: 'Current Treasury', value: `${guildData.treasury.toLocaleString()} coins`, inline: true },
+                { name: 'Your Contribution', value: '0 coins', inline: true }, // Would track individual contributions
+                { name: 'Total Donations', value: 'Coming soon', inline: true }
+            ])
+            .setDescription('Treasury management features in development');
+
+        await interaction.reply({ embeds: [embed], ephemeral: true });
+    },
+
+    async handleSettingsManagement(interaction) {
+        await interaction.reply({
+            content: '⚙️ **Guild Settings Panel**\n\n• Join request settings\n• Public profile visibility\n• Auto-accept new members\n• Guild announcements\n\n*Settings management interface coming soon!*',
+            ephemeral: true
+        });
+    },
+
+    async handlePerksManagement(interaction) {
+        await interaction.reply({
+            content: '🎯 **Guild Perks System**\n\n• XP bonuses for members\n• Shared treasury benefits\n• Special guild-only events\n• Enhanced drop rates\n\n*Perk system in development!*',
+            ephemeral: true
+        });
+    },
+
+    async handleJoin(interaction) {
+        const guildName = interaction.options.getString('guild');
+        const userData = await db.getPlayer(interaction.user.id);
         
-        await interaction.reply({ embeds: [embed], components });
+        if (userData?.guild) {
+            return await interaction.reply({
+                content: '❌ You\'re already in a guild! Leave your current guild first.',
+                ephemeral: true
+            });
+        }
+
+        const guildData = await db.getGuildByName(guildName);
+        if (!guildData) {
+            return await interaction.reply({
+                content: '❌ Guild not found! Use `/guild list` to see available guilds.',
+                ephemeral: true
+            });
+        }
+
+        if (guildData.members.length >= 50) {
+            return await interaction.reply({
+                content: '❌ This guild is full (50/50 members)!',
+                ephemeral: true
+            });
+        }
+
+        // Add user to guild
+        guildData.members.push(interaction.user.id);
+        await db.updateGuild(guildData.id, { members: guildData.members });
+        await db.updatePlayer(interaction.user.id, { 
+            guild: guildData.id,
+            guildRole: 'member'
+        });
+
+        const embed = new EmbedBuilder()
+            .setColor(config.embedColors?.success || '#00FF00')
+            .setTitle('🎉 Welcome to the Guild!')
+            .setDescription(`You've successfully joined **${guildData.name}**!`)
+            .addFields([
+                { name: '👥 Members', value: `${guildData.members.length}/50`, inline: true },
+                { name: '⭐ Guild Level', value: `${guildData.level}`, inline: true },
+                { name: '💰 Treasury', value: `${guildData.treasury.toLocaleString()} coins`, inline: true }
+            ])
+            .setFooter({ text: 'Use /guild info to learn more about your new guild!' });
+
+        await interaction.reply({ embeds: [embed] });
     },
-    
-    // Helper methods
-    async getGuildData(guildId) {
-        // Simulate guild data retrieval
-        const guildData = await db.getGuild(guildId);
-        return guildData;
-    },
-    
-    async saveGuildData(guildId, guildData) {
-        await db.setGuild(guildId, guildData);
-    },
-    
-    async findGuildByName(name) {
-        const guilds = await db.getAllGuilds() || [];
-        return guilds.find(guild => guild.name.toLowerCase() === name.toLowerCase());
-    },
-    
-    async getAllPublicGuilds() {
-        const guilds = await db.getAllGuilds() || [];
-        return guilds.filter(guild => guild.isPublic);
-    },
-    
-    generateGuildId() {
-        return Date.now().toString(36) + Math.random().toString(36).substr(2);
-    },
-    
-    getActivityLevel(guild) {
-        const activeMembers = guild.members.filter(member => 
-            member.lastActive > Date.now() - 7 * 24 * 60 * 60 * 1000
-        ).length;
-        const totalMembers = guild.members.length;
-        const activityRatio = activeMembers / totalMembers;
+
+    async handleLeave(interaction) {
+        const userData = await db.getPlayer(interaction.user.id);
+        if (!userData?.guild) {
+            return await interaction.reply({
+                content: '❌ You\'re not in a guild!',
+                ephemeral: true
+            });
+        }
+
+        const guildData = await db.getGuild(userData.guild);
+        if (guildData.owner === interaction.user.id) {
+            return await interaction.reply({
+                content: '❌ Guild owners cannot leave their guild! Transfer ownership or disband the guild first.',
+                ephemeral: true
+            });
+        }
+
+        // Remove user from guild
+        guildData.members = guildData.members.filter(id => id !== interaction.user.id);
+        guildData.officers = guildData.officers.filter(id => id !== interaction.user.id);
         
-        if (activityRatio >= 0.8) return 'Very High';
-        if (activityRatio >= 0.6) return 'High';
-        if (activityRatio >= 0.4) return 'Medium';
-        if (activityRatio >= 0.2) return 'Low';
-        return 'Very Low';
+        await db.updateGuild(guildData.id, { 
+            members: guildData.members,
+            officers: guildData.officers
+        });
+        
+        await db.updatePlayer(interaction.user.id, { 
+            guild: null,
+            guildRole: null
+        });
+
+        await interaction.reply({
+            content: `✅ You've left **${guildData.name}**. You can join another guild anytime!`,
+            ephemeral: true
+        });
     },
-    
-    getRoleEmoji(role) {
-        const emojis = {
-            leader: '👑',
-            officer: '⚔️',
-            member: '👤',
-            recruit: '🆕'
-        };
-        return emojis[role] || '👤';
+
+    async handleList(interaction) {
+        // This would show all guilds on the server
+        await interaction.reply({
+            content: '🏰 **Guild Directory**\n\nGuild listing system in development!\nFor now, ask other players about their guilds or create your own with `/guild create`.',
+            ephemeral: true
+        });
     }
 };

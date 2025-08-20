@@ -193,20 +193,3 @@ module.exports = {
         }
     },
 };
-            .setRequired(true))
-        .addStringOption(option =>
-            option.setName('difficulty')
-            .setDescription('Raid difficulty level')
-            .setRequired(true)
-            .addChoices(
-                { name: '🟢 Normal', value: 'normal' },
-                { name: '🟡 Hard', value: 'hard' },
-                { name: '🔴 Expert', value: 'expert' },
-                { name: '⚫ Mythic', value: 'mythic' }
-            )),
-
-    async execute(interaction) {
-        // Command logic will go here
-        await interaction.reply('Raid command not yet implemented.');
-    },
-};

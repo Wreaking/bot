@@ -4,29 +4,29 @@ const shopItems = {
         {
             id: 'wooden_sword',
             name: '🗡️ Wooden Sword',
-            description: 'A basic training sword',
+            description: 'A basic training sword made from wood, suitable for beginners.',
             price: 100,
             type: 'weapon',
             rarity: 'common',
-            stats: { attack: 5 }
+            stats: { attack: 5, durability: 50 }
         },
         {
             id: 'iron_sword',
             name: '⚔️ Iron Sword',
-            description: 'A reliable blade',
+            description: 'A reliable blade made from iron, offering a balance between attack and defense.',
             price: 500,
             type: 'weapon',
             rarity: 'uncommon',
-            stats: { attack: 15 }
+            stats: { attack: 15, defense: 5, durability: 100 }
         },
         {
             id: 'mystic_blade',
             name: '🗡️ Mystic Blade',
-            description: 'A sword imbued with magical power',
+            description: 'A sword imbued with magical power, capable of dealing massive damage to enemies.',
             price: 1500,
             type: 'weapon',
             rarity: 'rare',
-            stats: { attack: 25, magic: 10 }
+            stats: { attack: 25, magic: 10, durability: 150 }
         }
     ],
 
@@ -35,29 +35,29 @@ const shopItems = {
         {
             id: 'leather_armor',
             name: '🥋 Leather Armor',
-            description: 'Basic protective gear',
+            description: 'Basic protective gear made from leather, providing minimal defense.',
             price: 200,
             type: 'armor',
             rarity: 'common',
-            stats: { defense: 5 }
+            stats: { defense: 5, agility: 10 }
         },
         {
             id: 'chain_mail',
             name: '🛡️ Chain Mail',
-            description: 'Flexible metal armor',
+            description: 'Flexible metal armor offering a balance between defense and agility.',
             price: 800,
             type: 'armor',
             rarity: 'uncommon',
-            stats: { defense: 15 }
+            stats: { defense: 15, agility: 5 }
         },
         {
             id: 'dragon_scale',
             name: '🐉 Dragon Scale Armor',
-            description: 'Armor forged from dragon scales',
+            description: 'Armor forged from dragon scales, providing maximum defense and resistance to magic.',
             price: 2000,
             type: 'armor',
             rarity: 'rare',
-            stats: { defense: 25, magic_resist: 10 }
+            stats: { defense: 25, magic_resist: 10, agility: 5 }
         }
     ],
 
@@ -66,7 +66,7 @@ const shopItems = {
         {
             id: 'lucky_charm',
             name: '🍀 Lucky Charm',
-            description: 'Increases your luck',
+            description: 'Increases your luck, allowing you to find rare items more often.',
             price: 300,
             type: 'accessory',
             rarity: 'common',
@@ -75,7 +75,7 @@ const shopItems = {
         {
             id: 'speed_boots',
             name: '👢 Speed Boots',
-            description: 'Makes you more agile',
+            description: 'Makes you more agile, increasing your movement speed.',
             price: 600,
             type: 'accessory',
             rarity: 'uncommon',
@@ -84,7 +84,7 @@ const shopItems = {
         {
             id: 'power_ring',
             name: '💍 Power Ring',
-            description: 'Enhances all your abilities',
+            description: 'Enhances all your abilities, increasing attack, defense, and speed.',
             price: 1000,
             type: 'accessory',
             rarity: 'rare',
@@ -97,7 +97,7 @@ const shopItems = {
         {
             id: 'health_potion',
             name: '🧪 Health Potion',
-            description: 'Restores 50 HP',
+            description: 'Restores 50 HP, healing your wounds.',
             price: 100,
             type: 'consumable',
             rarity: 'common',
@@ -106,7 +106,7 @@ const shopItems = {
         {
             id: 'strength_potion',
             name: '💪 Strength Potion',
-            description: 'Temporarily increases attack',
+            description: 'Temporarily increases attack, making you stronger.',
             price: 150,
             type: 'consumable',
             rarity: 'common',
@@ -120,7 +120,7 @@ const shopItems = {
         {
             id: 'treasure_map',
             name: '🗺️ Treasure Map',
-            description: 'Reveals hidden treasure locations',
+            description: 'Reveals hidden treasure locations, leading you to riches.',
             price: 500,
             type: 'special',
             rarity: 'uncommon',
@@ -129,7 +129,7 @@ const shopItems = {
         {
             id: 'mystery_key',
             name: '🗝️ Mystery Key',
-            description: 'Opens special treasure chests',
+            description: 'Opens special treasure chests, granting you access to exclusive rewards.',
             price: 1000,
             type: 'special',
             rarity: 'rare',

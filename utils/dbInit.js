@@ -1,30 +1,45 @@
+// Enhanced error handling and database initialization
 const { QuickDB } = require('quick.db');
 const db = new QuickDB();
 
+const DEFAULT_TABLES = {
+    users: {},
+    hunts: {},
+    clues: {},
+    players: {},
+    guilds: {},
+    shop: {},
+    events: {},
+    achievements: {},
+    stats: {}
+};
+
 async function initializeDatabase() {
     try {
-        // Initialize users table
-        const users = await db.get('users');
-        if (!users) {
-            await db.set('users', {});
+        // Initialize all tables with default structures
+        for (const [table, defaultValue] of Object.entries(DEFAULT_TABLES)) {
+            const existingData = await db.get(table);
+            if (!existingData) {
+                await db.set(table, defaultValue);
+                console.log(`✅ Initialized ${table} table`);
+            }
         }
 
-        // Initialize hunts table
-        const hunts = await db.get('hunts');
-        if (!hunts) {
-            await db.set('hunts', {});
+        // Validate database structure
+        const tables = Object.keys(DEFAULT_TABLES);
+        const promises = tables.map(table => db.get(table));
+        const results = await Promise.all(promises);
+        
+        const missingTables = tables.filter((table, index) => !results[index]);
+        if (missingTables.length > 0) {
+            throw new Error(`Missing tables: ${missingTables.join(', ')}`);
         }
 
-        // Initialize clues table
-        const clues = await db.get('clues');
-        if (!clues) {
-            await db.set('clues', {});
-        }
-
-        console.log('✅ Database initialized with hunts and clues');
+        console.log('✅ Database initialized successfully');
     } catch (error) {
         console.error('Error initializing database:', error);
-        throw error;
+        console.error('Stack trace:', error.stack);
+        throw new Error(`Database initialization failed: ${error.message}`);
     }
 }
 

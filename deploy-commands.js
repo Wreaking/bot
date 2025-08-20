@@ -15,63 +15,101 @@ const commands = [];
 // Function to recursively load commands from subdirectories
 function loadCommands(dir) {
     const files = fs.readdirSync(dir, { withFileTypes: true });
-    
+
     for (const file of files) {
         const filePath = path.join(dir, file.name);
-        
+
         if (file.isDirectory()) {
             // If it's a directory, recurse into it
             loadCommands(filePath);
-        } else if (file.name.endsWith('.js')) {
+        } else if (file.name.endsWith('.js') && !file.name.endsWith('.bak') && !file.name.endsWith('.new')) {
             try {
                 // Clear require cache to avoid stale modules
                 delete require.cache[require.resolve(filePath)];
-                
+
                 // Load the command file
                 const command = require(filePath);
-                
-                // Validate command structure
+
+                // Enhanced validation for command structure
+                if (!command || typeof command !== 'object') {
+                    console.log(`\n❌ Failed to load: ${filePath}`);
+                    console.log('   Invalid command export - not an object');
+                    continue;
+                }
+
                 if (!command.data || !command.execute) {
                     console.log(`\n❌ Failed to load: ${filePath}`);
                     console.log('   Missing required properties (data/execute)');
                     continue;
                 }
 
-                if (!command.data.name || !command.data.description) {
+                if (typeof command.execute !== 'function') {
+                    console.log(`\n❌ Failed to load: ${filePath}`);
+                    console.log('   Execute property is not a function');
+                    continue;
+                }
+
+                // Check for command name and description
+                let commandName = '';
+                let commandDescription = '';
+                let serializedData = null;
+
+                // Try different ways to get command info
+                if (command.data.name && command.data.description) {
+                    commandName = command.data.name;
+                    commandDescription = command.data.description;
+                } else if (typeof command.data.toJSON === 'function') {
+                    try {
+                        serializedData = command.data.toJSON();
+                        commandName = serializedData.name;
+                        commandDescription = serializedData.description;
+                    } catch (serializeError) {
+                        console.log(`\n❌ Failed to serialize command in: ${filePath}`);
+                        console.log(`   Serialization error: ${serializeError.message}`);
+                        continue;
+                    }
+                }
+
+                if (!commandName || !commandDescription) {
                     console.log(`\n❌ Failed to load: ${filePath}`);
                     console.log('   Command data missing name or description');
                     continue;
                 }
 
-                // Try to serialize the command data
-                try {
-                    const serializedData = command.data.toJSON();
-                    commands.push(serializedData);
-                    console.log(`\n✅ Loaded command: ${command.data.name}`);
-                    console.log(`   📍 Path: ${filePath}`);
-                    console.log(`   📝 Description: ${command.data.description}`);
-                } catch (serializeError) {
-                    console.log(`\n❌ Failed to serialize command in: ${filePath}`);
-                    console.log('   Error details:');
-                    console.log(`   Message: ${serializeError.message}`);
-                    if (serializeError.stack) {
-                        const stackLines = serializeError.stack.split('\n');
-                        // Find the relevant line in the command file
-                        const relevantLine = stackLines.find(line => line.includes(filePath));
-                        if (relevantLine) {
-                            const match = relevantLine.match(/:(\d+):\d+/);
-                            if (match) {
-                                console.log(`   Line number: ${match[1]}`);
-                            }
-                        }
-                        console.log('   Stack trace:');
-                        stackLines.forEach(line => console.log(`   ${line}`));
+                // Try to serialize the command data if not already done
+                if (!serializedData) {
+                    try {
+                        serializedData = command.data.toJSON();
+                    } catch (serializeError) {
+                        console.log(`\n❌ Failed to serialize command in: ${filePath}`);
+                        console.log(`   Serialization error: ${serializeError.message}`);
+                        continue;
                     }
                 }
+
+                // Add to commands array
+                commands.push(serializedData);
+                console.log(`\n✅ Loaded command: ${commandName}`);
+                console.log(`   📍 Path: ${filePath}`);
+                console.log(`   📝 Description: ${commandDescription}`);
+
             } catch (error) {
                 console.log(`\n❌ Failed to load: ${filePath}`);
                 console.log('   Error details:');
                 console.log(`   Message: ${error.message}`);
+
+                // Provide more specific error messages
+                if (error.code === 'MODULE_NOT_FOUND') {
+                    console.log('   This appears to be a missing dependency error');
+                    console.log('   Check that all required modules are installed');
+                } else if (error.name === 'SyntaxError') {
+                    console.log('   This appears to be a syntax error');
+                    console.log('   Check the file for missing brackets, semicolons, etc.');
+                } else if (error.message.includes('await is only valid in async functions')) {
+                    console.log('   This appears to be an async/await error');
+                    console.log('   Make sure await is only used inside async functions');
+                }
+
                 if (error.stack) {
                     const stackLines = error.stack.split('\n');
                     // Find the relevant line in the command file
@@ -82,10 +120,10 @@ function loadCommands(dir) {
                             console.log(`   Line number: ${match[1]}`);
                         }
                     }
-                    console.log('   Stack trace:');
-                    stackLines.forEach(line => console.log(`   ${line}`));
                 }
             }
+        } else if (file.name.endsWith('.bak') || file.name.endsWith('.new')) {
+            console.log(`\n⏭️ Skipped backup file: ${file.name}`);
         }
     }
 }

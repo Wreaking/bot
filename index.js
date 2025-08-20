@@ -138,47 +138,88 @@ function loadCommandsFallback(dir, categoryMap = new Map()) {
         const fullPath = path.join(dir, file.name);
 
         if (file.isDirectory()) {
-            const subDirStats = loadCommands(fullPath, categoryMap);
+            const subDirStats = loadCommandsFallback(fullPath, categoryMap);
             loadedCommands += subDirStats.loaded;
             failedCommands += subDirStats.failed;
             skippedFiles += subDirStats.skipped;
-        } else if (file.name.endsWith('.js')) {
+        } else if (file.name.endsWith('.js') && !file.name.endsWith('.bak') && !file.name.endsWith('.new')) {
             try {
                 // Clear require cache to avoid stale modules
                 delete require.cache[require.resolve(fullPath)];
                 const command = require(fullPath);
 
-                if (command && typeof command === 'object' && 'data' in command && 'execute' in command) {
-                    // Validate command data structure
-                    if (!command.data.name || !command.data.description) {
-                        console.log(`   ⚠️ Skipped: ${fullPath}`);
-                        console.log(`      ❗ Reason: Invalid command data structure`);
-                        skippedFiles++;
-                        continue;
+                // Enhanced validation for different command structures
+                if (command && typeof command === 'object') {
+                    let isValid = false;
+                    let commandName = '';
+                    let commandDescription = '';
+
+                    // Check for SlashCommandBuilder structure
+                    if (command.data && command.execute) {
+                        if (command.data.name && command.data.description) {
+                            isValid = true;
+                            commandName = command.data.name;
+                            commandDescription = command.data.description;
+                        } else if (typeof command.data.toJSON === 'function') {
+                            try {
+                                const serialized = command.data.toJSON();
+                                if (serialized.name && serialized.description) {
+                                    isValid = true;
+                                    commandName = serialized.name;
+                                    commandDescription = serialized.description;
+                                }
+                            } catch (serializeError) {
+                                console.log(`   ⚠️ Skipped: ${file.name}`);
+                                console.log(`      ❗ Serialization error: ${serializeError.message}`);
+                                skippedFiles++;
+                                continue;
+                            }
+                        }
                     }
 
-                    client.commands.set(command.data.name, command);
-                    // Also register as prefix command
-                    client.prefixCommands.set(command.data.name, command);
+                    if (isValid) {
+                        // Check for duplicate command names
+                        if (client.commands.has(commandName)) {
+                            console.log(`   ⚠️ Skipped: ${file.name}`);
+                            console.log(`      ❗ Duplicate command name: ${commandName}`);
+                            skippedFiles++;
+                            continue;
+                        }
 
-                    // Add command to category tracking
-                    categoryMap.get(category).loaded++;
-                    categoryMap.get(category).commands.push(command.data.name);
+                        client.commands.set(commandName, command);
+                        client.prefixCommands.set(commandName, command);
 
-                    console.log(`   ✅ Loaded: ${command.data.name}`);
-                    console.log(`      📍 Path: ${fullPath}`);
-                    console.log(`      📝 Description: ${command.data.description}`);
-                    loadedCommands++;
+                        // Add command to category tracking
+                        categoryMap.get(category).loaded++;
+                        categoryMap.get(category).commands.push(commandName);
+
+                        console.log(`   ✅ Loaded: ${commandName}`);
+                        console.log(`      📍 Path: ${fullPath}`);
+                        console.log(`      📝 Description: ${commandDescription}`);
+                        loadedCommands++;
+                    } else {
+                        console.log(`   ⚠️ Skipped: ${file.name}`);
+                        console.log(`      ❗ Reason: Invalid command structure - missing data/execute or name/description`);
+                        skippedFiles++;
+                    }
                 } else {
-                    console.log(`   ⚠️ Skipped: ${fullPath}`);
-                    console.log(`      ❗ Reason: Missing required properties (data/execute)`);
+                    console.log(`   ⚠️ Skipped: ${file.name}`);
+                    console.log(`      ❗ Reason: Invalid export - not an object`);
                     skippedFiles++;
                 }
             } catch (error) {
-                console.error(`   ❌ Failed: ${fullPath}`);
+                console.error(`   ❌ Failed: ${file.name}`);
                 console.error(`      ❗ Error: ${error.message}`);
+                if (error.code === 'MODULE_NOT_FOUND') {
+                    console.error(`      ❗ Missing dependency - check imports in ${file.name}`);
+                } else if (error.name === 'SyntaxError') {
+                    console.error(`      ❗ Syntax error in ${file.name} - check for missing semicolons, brackets, etc.`);
+                }
                 failedCommands++;
             }
+        } else if (file.name.endsWith('.bak') || file.name.endsWith('.new')) {
+            console.log(`   ⏭️ Skipped backup file: ${file.name}`);
+            skippedFiles++;
         }
     }
 

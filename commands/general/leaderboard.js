@@ -1,303 +1,340 @@
-const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, StringSelectMenuBuilder, ButtonStyle } = require('discord.js');
+const { db } = require('../../database.js');
 const config = require('../../config.js');
-const db = require('../../database.js');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('leaderboard')
-        .setDescription('🏆 View the top adventurers and your ranking!')
+        .setDescription('🏆 View various leaderboards and rankings')
         .addStringOption(option =>
             option.setName('category')
-                .setDescription('Choose leaderboard category')
-                .setRequired(false)
+                .setDescription('Select leaderboard category')
                 .addChoices(
-                    { name: '💰 Richest Players', value: 'coins' },
-                    { name: '⭐ Highest Level', value: 'level' },
-                    { name: '🗺️ Most Hunts', value: 'hunts' },
-                    { name: '⚔️ Battle Champions', value: 'battles' },
-                    { name: '🏰 Dungeon Masters', value: 'dungeons' },
-                    { name: '🔮 Magic Masters', value: 'magic' },
-                    { name: '💎 Total Earnings', value: 'earnings' }
-                )),
-    
+                    { name: 'Coins', value: 'coins' },
+                    { name: 'Level', value: 'level' },
+                    { name: 'Mining', value: 'mining' },
+                    { name: 'Fishing', value: 'fishing' },
+                    { name: 'Combat', value: 'combat' }
+                )
+        ),
+
     async execute(interaction) {
-        const category = interaction.options?.getString('category') || 'coins';
-        const userId = interaction.user.id;
-        
-        // Get all users data
-        const allUsers = await db.getAllUsers() || [];
-        
-        if (allUsers.length === 0) {
+        try {
+            const category = interaction.options.getString('category') || 'coins';
+
+            await this.showLeaderboard(interaction, category);
+        } catch (error) {
+            console.error('Leaderboard command error:', error);
+            await interaction.reply({
+                content: '❌ An error occurred while fetching the leaderboard.',
+                ephemeral: true
+            });
+        }
+    },
+
+    async showLeaderboard(interaction, category) {
+        // Get all users from database
+        const allUsers = await this.getAllUsers(interaction); // Pass interaction for context
+
+        // Handle case where no users are found
+        if (!allUsers || allUsers.length === 0) {
             return interaction.reply({
                 content: '❌ No player data found! Start playing to appear on leaderboards.',
                 ephemeral: true
             });
         }
-        
-        await this.showLeaderboard(interaction, category, allUsers, userId);
-    },
-    
-    async showLeaderboard(interaction, category, allUsers, userId) {
-        // Sort users based on category
+
+        // Sort based on category
         let sortedUsers = [];
-        let categoryName = '';
-        let categoryEmoji = '';
-        let valueField = '';
-        
         switch (category) {
             case 'coins':
-                categoryName = 'Richest Adventurers';
-                categoryEmoji = '💰';
-                valueField = 'coins';
-                sortedUsers = allUsers.sort((a, b) => (b.inventory?.coins || 0) - (a.inventory?.coins || 0));
+                sortedUsers = allUsers.sort((a, b) => (b.coins || 0) - (a.coins || 0));
                 break;
             case 'level':
-                categoryName = 'Highest Level Players';
-                categoryEmoji = '⭐';
-                valueField = 'level';
-                sortedUsers = allUsers.sort((a, b) => (b.stats?.level || 1) - (a.stats?.level || 1));
+                sortedUsers = allUsers.sort((a, b) => (b.level || 1) - (a.level || 1));
                 break;
-            case 'hunts':
-                categoryName = 'Treasure Hunt Masters';
-                categoryEmoji = '🗺️';
-                valueField = 'hunts';
-                sortedUsers = allUsers.sort((a, b) => (b.stats?.huntsCompleted || 0) - (a.stats?.huntsCompleted || 0));
+            case 'mining':
+                sortedUsers = allUsers.sort((a, b) => (b.skills?.mining || 1) - (a.skills?.mining || 1));
                 break;
-            case 'battles':
-                categoryName = 'Battle Champions';
-                categoryEmoji = '⚔️';
-                valueField = 'battles';
-                sortedUsers = allUsers.sort((a, b) => (b.stats?.battlesWon || 0) - (a.stats?.battlesWon || 0));
+            case 'fishing':
+                sortedUsers = allUsers.sort((a, b) => (b.skills?.fishing || 1) - (a.skills?.fishing || 1));
                 break;
-            case 'dungeons':
-                categoryName = 'Dungeon Conquerors';
-                categoryEmoji = '🏰';
-                valueField = 'dungeons';
-                sortedUsers = allUsers.sort((a, b) => (b.stats?.dungeonClears || 0) - (a.stats?.dungeonClears || 0));
+            case 'combat':
+                sortedUsers = allUsers.sort((a, b) => (b.skills?.combat || 1) - (a.skills?.combat || 1));
                 break;
-            case 'magic':
-                categoryName = 'Arcane Masters';
-                categoryEmoji = '🔮';
-                valueField = 'magic';
-                sortedUsers = allUsers.sort((a, b) => (b.magic?.level || 1) - (a.magic?.level || 1));
-                break;
-            case 'earnings':
-                categoryName = 'Lifetime Earners';
-                categoryEmoji = '💎';
-                valueField = 'earnings';
-                sortedUsers = allUsers.sort((a, b) => (b.stats?.totalEarned || 0) - (a.stats?.totalEarned || 0));
+            default: // Default to coins if category is invalid
+                sortedUsers = allUsers.sort((a, b) => (b.coins || 0) - (a.coins || 0));
+                category = 'coins'; // Ensure category is updated
                 break;
         }
-        
-        // Find user's rank
-        const userRank = sortedUsers.findIndex(user => user.id === userId) + 1;
-        const userData = sortedUsers.find(user => user.id === userId);
-        
+
+        const top10 = sortedUsers.slice(0, 10);
+        const userRank = sortedUsers.findIndex(user => user.id === interaction.user.id) + 1;
+
         const embed = new EmbedBuilder()
-            .setColor(config.embedColors.leaderboard)
-            .setTitle(`🏆 ${categoryName} Leaderboard`)
-            .setDescription(`**Top adventurers ranked by ${categoryName.toLowerCase()}**`)
-            .setThumbnail('https://cdn.discordapp.com/emojis/742747860554686485.png');
-        
-        // Add top 10 players
-        const topPlayers = sortedUsers.slice(0, 10);
-        const leaderboardText = topPlayers.map((user, index) => {
-            const rank = index + 1;
-            const value = this.getUserValue(user, category);
-            const medalEmoji = this.getRankEmoji(rank);
-            const username = user.username || `User ${user.id.slice(-4)}`;
-            
-            return `${medalEmoji} **${rank}.** ${username}\n   ${categoryEmoji} ${value}`;
-        }).join('\n\n');
-        
-        embed.addFields([
-            {
-                name: `${categoryEmoji} Top 10 ${categoryName}`,
-                value: leaderboardText || 'No data available',
-                inline: false
-            }
-        ]);
-        
-        // Add user's ranking
-        if (userRank > 0) {
-            const userValue = this.getUserValue(userData, category);
-            let rankText = '';
-            
-            if (userRank <= 10) {
-                rankText = `You're in the top 10! 🎉`;
-            } else if (userRank <= 50) {
-                rankText = `You're in the top 50! 👏`;
-            } else if (userRank <= 100) {
-                rankText = `You're in the top 100! 💪`;
-            } else {
-                rankText = `Keep climbing the ranks! 📈`;
-            }
-            
-            embed.addFields([
+            .setColor(config.embedColors?.gold || '#FFD700')
+            .setTitle(`🏆 ${category.charAt(0).toUpperCase() + category.slice(1)} Leaderboard`)
+            .setDescription(this.formatLeaderboard(top10, category))
+            .addFields([
                 {
-                    name: '📊 Your Ranking',
-                    value: `**Rank #${userRank}** out of ${sortedUsers.length} players\n${categoryEmoji} Your ${this.getCategoryLabel(category)}: **${userValue}**\n${rankText}`,
-                    inline: false
-                }
-            ]);
-        } else {
-            embed.addFields([
+                    name: '📊 Your Rank',
+                    value: userRank > 0 ? `#${userRank}` : 'Not ranked',
+                    inline: true
+                },
                 {
-                    name: '📊 Your Ranking',
-                    value: `You haven't started your adventure yet!\nUse \`/hunt\` or \`/daily\` to begin earning your place on the leaderboard.`,
-                    inline: false
+                    name: '👥 Total Players',
+                    value: `${allUsers.length}`,
+                    inline: true
                 }
-            ]);
-        }
-        
-        // Add statistics
-        const totalPlayers = allUsers.length;
-        const activePlayers = allUsers.filter(user => (user.stats?.lastHunt || 0) > Date.now() - 7 * 24 * 60 * 60 * 1000).length;
-        
-        embed.addFields([
-            {
-                name: '📈 Server Statistics',
-                value: `👥 Total Players: **${totalPlayers}**\n🎮 Active (7 days): **${activePlayers}**\n🏆 Competition Level: **${this.getCompetitionLevel(totalPlayers)}**`,
-                inline: true
-            },
-            {
-                name: '🎯 Leaderboard Tips',
-                value: '• Complete daily hunts\n• Battle other players\n• Explore dungeons\n• Level up your skills',
-                inline: true
-            }
-        ]);
-        
-        // Create category selection menu
-        const categorySelect = new StringSelectMenuBuilder()
-            .setCustomId('leaderboard_category_select')
-            .setPlaceholder('📊 Switch leaderboard category...')
+            ])
+            .setTimestamp()
+            .setFooter({ text: 'Rankings update in real-time!' });
+
+        const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId(`leaderboard_${interaction.user.id}`)
+            .setPlaceholder('Select a different leaderboard')
             .addOptions([
                 {
-                    label: 'Richest Players',
-                    description: 'Players with the most coins',
-                    value: 'leaderboard_coins',
+                    label: '💰 Coins',
+                    description: 'Richest treasure hunters',
+                    value: 'coins',
                     emoji: '💰'
                 },
                 {
-                    label: 'Highest Level',
-                    description: 'Players with the highest level',
-                    value: 'leaderboard_level',
+                    label: '⭐ Level',
+                    description: 'Highest level players',
+                    value: 'level',
                     emoji: '⭐'
                 },
                 {
-                    label: 'Treasure Hunt Masters',
-                    description: 'Most treasure hunts completed',
-                    value: 'leaderboard_hunts',
-                    emoji: '🗺️'
+                    label: '⛏️ Mining',
+                    description: 'Master miners',
+                    value: 'mining',
+                    emoji: '⛏️'
                 },
                 {
-                    label: 'Battle Champions',
-                    description: 'Most battles won',
-                    value: 'leaderboard_battles',
+                    label: '🎣 Fishing',
+                    description: 'Expert anglers',
+                    value: 'fishing',
+                    emoji: '🎣'
+                },
+                {
+                    label: '⚔️ Combat',
+                    description: 'Legendary warriors',
+                    value: 'combat',
                     emoji: '⚔️'
-                },
-                {
-                    label: 'Dungeon Conquerors',
-                    description: 'Most dungeons cleared',
-                    value: 'leaderboard_dungeons',
-                    emoji: '🏰'
-                },
-                {
-                    label: 'Arcane Masters',
-                    description: 'Highest magic level',
-                    value: 'leaderboard_magic',
-                    emoji: '🔮'
-                },
-                {
-                    label: 'Lifetime Earners',
-                    description: 'Total coins earned all-time',
-                    value: 'leaderboard_earnings',
-                    emoji: '💎'
                 }
             ]);
-            
+
         const buttons = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
-                    .setCustomId('leaderboard_refresh')
+                    .setCustomId(`leaderboard_refresh_${interaction.user.id}`)
                     .setLabel('🔄 Refresh')
                     .setStyle(ButtonStyle.Secondary),
                 new ButtonBuilder()
-                    .setCustomId('profile_compare')
-                    .setLabel('📊 Compare Stats')
+                    .setCustomId(`leaderboard_myrank_${interaction.user.id}`)
+                    .setLabel('📊 My Details')
                     .setStyle(ButtonStyle.Primary),
                 new ButtonBuilder()
-                    .setCustomId('leaderboard_detailed')
-                    .setLabel('📋 Detailed View')
-                    .setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder()
-                    .setCustomId('achievements_view')
-                    .setLabel('🏅 Achievements')
+                    .setCustomId(`leaderboard_global_${interaction.user.id}`)
+                    .setLabel('🌐 Global Stats')
                     .setStyle(ButtonStyle.Success)
             );
-            
-        const components = [
-            new ActionRowBuilder().addComponents(categorySelect),
-            buttons
-        ];
-        
-        embed.setFooter({ 
-            text: `Updated ${new Date().toLocaleTimeString()} • Showing ${categoryName}` 
+
+        const selectRow = new ActionRowBuilder().addComponents(selectMenu);
+
+        const response = { embeds: [embed], components: [selectRow, buttons] };
+
+        if (interaction.replied || interaction.deferred) {
+            await interaction.editReply(response);
+        } else {
+            await interaction.reply(response);
+        }
+    },
+
+    formatLeaderboard(users, category) {
+        if (users.length === 0) {
+            return '```\nNo players found!\n```';
+        }
+
+        let description = '```\n';
+        users.forEach((user, index) => {
+            const rank = index + 1;
+            const medal = rank <= 3 ? ['🥇', '🥈', '🥉'][rank - 1] : '🔸';
+            const userName = user.username || `User${user.id.slice(0, 4)}`;
+
+            let value;
+            switch (category) {
+                case 'coins':
+                    value = `${user.coins || 0} coins`;
+                    break;
+                case 'level':
+                    value = `Level ${user.level || 1}`;
+                    break;
+                case 'mining':
+                    value = `Level ${user.skills?.mining || 1}`;
+                    break;
+                case 'fishing':
+                    value = `Level ${user.skills?.fishing || 1}`;
+                    break;
+                case 'combat':
+                    value = `Level ${user.skills?.combat || 1}`;
+                    break;
+                default: // Fallback for unknown categories
+                    value = 'N/A';
+                    break;
+            }
+
+            description += `${medal} #${rank.toString().padStart(2)} ${userName.padEnd(12)} ${value}\n`;
         });
-        
-        await interaction.reply({ embeds: [embed], components });
+        description += '```';
+
+        return description;
     },
-    
-    getUserValue(user, category) {
-        switch (category) {
-            case 'coins':
-                return `${user.inventory?.coins || 0} coins`;
-            case 'level':
-                return `Level ${user.stats?.level || 1}`;
-            case 'hunts':
-                return `${user.stats?.huntsCompleted || 0} hunts`;
-            case 'battles':
-                return `${user.stats?.battlesWon || 0} wins`;
-            case 'dungeons':
-                return `${user.stats?.dungeonClears || 0} clears`;
-            case 'magic':
-                return `Magic Lvl ${user.magic?.level || 1}`;
-            case 'earnings':
-                return `${user.stats?.totalEarned || 0} total coins`;
-            default:
-                return '0';
+
+    async getAllUsers(interaction) { // Added interaction parameter
+        try {
+            // This is a placeholder - in a real implementation, you'd fetch from your database
+            // For demonstration, we'll use sample data and try to fetch the current user.
+            const sampleUsers = [
+                { id: '1', username: 'TreasureHunter1', coins: 5000, level: 25, skills: { mining: 15, fishing: 12, combat: 20 }},
+                { id: '2', username: 'GoldSeeker', coins: 4500, level: 22, skills: { mining: 18, fishing: 10, combat: 15 }},
+                { id: '3', username: 'AdventureQuest', coins: 4000, level: 20, skills: { mining: 12, fishing: 15, combat: 18 }},
+                { id: '4', username: 'LootMaster', coins: 3500, level: 18, skills: { mining: 14, fishing: 13, combat: 16 }},
+                { id: '5', username: 'ExplorePro', coins: 3000, level: 16, skills: { mining: 11, fishing: 16, combat: 14 }}
+            ];
+
+            // Attempt to fetch the current user from the database
+            let currentUserData = null;
+            if (interaction && interaction.user && interaction.user.id) {
+                try {
+                    // Assuming db.getPlayer returns a promise that resolves with user data or null
+                    currentUserData = await db.getPlayer(interaction.user.id);
+                } catch (dbError) {
+                    console.error(`Error fetching player ${interaction.user.id} from DB:`, dbError);
+                    // Continue with sample data if DB fetch fails
+                }
+            }
+
+            // Combine sample users with fetched current user data if available and not already in samples
+            const finalUsers = [...sampleUsers];
+            if (currentUserData && !finalUsers.some(u => u.id === currentUserData.id)) {
+                // Ensure username is set if it's missing from db data
+                if (!currentUserData.username) {
+                    currentUserData.username = 'You'; // Set a default if needed
+                }
+                finalUsers.push(currentUserData);
+            } else if (currentUserData && finalUsers.some(u => u.id === currentUserData.id)) {
+                // If user is already in samples, update their data if necessary, e.g., add 'You'
+                const existingUserIndex = finalUsers.findIndex(u => u.id === currentUserData.id);
+                if (existingUserIndex !== -1) {
+                    // Optionally update existing user's data, or just ensure username is 'You'
+                    finalUsers[existingUserIndex].username = 'You';
+                }
+            } else if (!interaction || !interaction.user || !interaction.user.id) {
+                console.warn("Interaction or user ID not available, cannot fetch current user data.");
+            }
+
+
+            // If no users were fetched and no samples provided, return empty array
+            if (finalUsers.length === 0) {
+                return [];
+            }
+
+            return finalUsers;
+
+        } catch (error) {
+            console.error('Error in getAllUsers:', error);
+            return []; // Return empty array on error
         }
     },
-    
-    getCategoryLabel(category) {
-        const labels = {
-            coins: 'coins',
-            level: 'level',
-            hunts: 'hunts completed',
-            battles: 'battles won',
-            dungeons: 'dungeons cleared',
-            magic: 'magic level',
-            earnings: 'total earned'
-        };
-        return labels[category] || 'score';
-    },
-    
-    getRankEmoji(rank) {
-        switch (rank) {
-            case 1: return '🥇';
-            case 2: return '🥈';
-            case 3: return '🥉';
-            case 4:
-            case 5: return '🏅';
-            default: return '🔸';
+
+    // Button handlers
+    buttonHandlers: {
+        refresh: async function(interaction) {
+            // Determine the current category from the interaction message, or default to coins
+            const currentEmbed = interaction.message.embeds[0];
+            let category = 'coins'; // Default category
+            if (currentEmbed && currentEmbed.title) {
+                const titleMatch = currentEmbed.title.match(/🏆 (.*) Leaderboard/);
+                if (titleMatch && titleMatch[1]) {
+                    category = titleMatch[1].toLowerCase().replace(' ', ''); // e.g., "Richest Players" -> "richestplayers" -> needs mapping
+                    // Simple mapping for example, actual mapping might be needed
+                    if (category.includes('coins')) category = 'coins';
+                    else if (category.includes('level')) category = 'level';
+                    else if (category.includes('mining')) category = 'mining';
+                    else if (category.includes('fishing')) category = 'fishing';
+                    else if (category.includes('combat')) category = 'combat';
+                }
+            }
+            await this.showLeaderboard(interaction, category);
+        },
+
+        myrank: async function(interaction) {
+            try {
+                // Assuming db.getPlayer returns user data, including skills
+                const userData = await db.getPlayer(interaction.user.id);
+
+                if (!userData) {
+                    return interaction.update({
+                        content: '❌ Could not retrieve your profile data. Please try again later.',
+                        components: [],
+                        embeds: []
+                    });
+                }
+
+                const embed = new EmbedBuilder()
+                    .setColor(config.embedColors?.info || '#0099ff')
+                    .setTitle('📊 Your Profile Stats')
+                    .setDescription('Here are your current statistics:')
+                    .addFields([
+                        { name: '💰 Coins', value: `${userData.coins || 0}`, inline: true },
+                        { name: '⭐ Level', value: `${userData.level || 1}`, inline: true },
+                        { name: '✨ Experience', value: `${userData.experience || 0}`, inline: true },
+                        { name: '⛏️ Mining', value: `Level ${userData.skills?.mining || 1}`, inline: true },
+                        { name: '🎣 Fishing', value: `Level ${userData.skills?.fishing || 1}`, inline: true },
+                        { name: '⚔️ Combat', value: `Level ${userData.skills?.combat || 1}`, inline: true }
+                    ])
+                    .setTimestamp()
+                    .setFooter({ text: 'Keep playing to improve your rankings!' });
+
+                await interaction.update({ embeds: [embed], components: [] });
+            } catch (error) {
+                console.error('Error showing user rank:', error);
+                await interaction.update({
+                    content: '❌ An error occurred while fetching your stats.',
+                    components: [],
+                    embeds: []
+                });
+            }
+        },
+
+        global: async function(interaction) {
+            // Placeholder for global stats. In a real scenario, these would be fetched or stored.
+            const embed = new EmbedBuilder()
+                .setColor(config.embedColors?.success || '#00ff00')
+                .setTitle('🌐 Global Server Statistics')
+                .addFields([
+                    { name: '👥 Total Players', value: '1,337', inline: true }, // Example value
+                    { name: '💰 Total Coins', value: '2,500,000', inline: true }, // Example value
+                    { name: '🏆 Achievements Earned', value: '8,456', inline: true }, // Example value
+                    { name: '⛏️ Ores Mined', value: '45,678', inline: true }, // Example value
+                    { name: '🎣 Fish Caught', value: '23,456', inline: true }, // Example value
+                    { name: '⚔️ Battles Won', value: '12,789', inline: true } // Example value
+                ])
+                .setTimestamp()
+                .setFooter({ text: 'Statistics updated daily' });
+
+            await interaction.update({ embeds: [embed], components: [] });
         }
     },
-    
-    getCompetitionLevel(playerCount) {
-        if (playerCount >= 100) return 'Fierce';
-        if (playerCount >= 50) return 'High';
-        if (playerCount >= 20) return 'Moderate';
-        if (playerCount >= 10) return 'Growing';
-        return 'Casual';
+
+    // Select menu handler
+    selectMenuHandlers: {
+        default: async function(interaction) {
+            const selectedCategory = interaction.values[0]; // The value of the selected option
+            await this.showLeaderboard(interaction, selectedCategory);
+        }
     }
 };

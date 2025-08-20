@@ -428,7 +428,7 @@ module.exports = {
             }
 
             const totalReward = unclaimedRewards.reduce((total, ach) => {
-                const achData = this.findAchievementData(ach.id);
+                const achData = module.exports.findAchievementData(ach.id);
                 return total + (achData ? achData.reward : 0);
             }, 0);
 
@@ -443,9 +443,9 @@ module.exports = {
             const embed = new EmbedBuilder()
                 .setColor(config.embedColors?.success || '#00FF00')
                 .setTitle('🎉 Rewards Claimed!')
-                .setDescription(`You've claimed **${totalReward}** coins from **${unclaimedRewards.length}** achievements!`)
+                .setDescription(`You've claimed **${totalReward.toLocaleString()}** coins from **${unclaimedRewards.length}** achievements!`)
                 .addFields([
-                    { name: '💰 New Balance', value: `${userData.coins + totalReward} coins`, inline: true },
+                    { name: '💰 New Balance', value: `${(userData.coins + totalReward).toLocaleString()} coins`, inline: true },
                     { name: '🏆 Achievements Claimed', value: `${unclaimedRewards.length}`, inline: true }
                 ])
                 .setTimestamp();
@@ -475,7 +475,7 @@ module.exports = {
                 const progressBar = '█'.repeat(progress) + '░'.repeat(20 - progress);
                 
                 return {
-                    name: `${this.getCategoryEmoji(category)} ${this.getCategoryName(category)}`,
+                    name: `${module.exports.getCategoryEmoji(category)} ${module.exports.getCategoryName(category)}`,
                     value: `${progressBar} ${unlocked}/${categoryAchievements.length} (${Math.round((unlocked / categoryAchievements.length) * 100)}%)`,
                     inline: false
                 };

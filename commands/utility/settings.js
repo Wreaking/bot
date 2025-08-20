@@ -1,4 +1,5 @@
-const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require('discord.js');
+
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const config = require('../../config.js');
 const db = require('../../database.js');
 
@@ -20,7 +21,6 @@ module.exports = {
     
     async execute(interaction) {
         const category = interaction.options?.getString('category');
-        const userId = interaction.user.id;
         
         if (category) {
             await this.showCategorySettings(interaction, category);
@@ -31,161 +31,190 @@ module.exports = {
     
     async showMainSettings(interaction) {
         const userId = interaction.user.id;
-        const userData = await db.getPlayer(userId) || {};
-        const settings = userData.settings || this.getDefaultSettings();
         
-        const embed = new EmbedBuilder()
-            .setColor(config.embedColors.info)
-            .setTitle('⚙️ Bot Settings & Preferences')
-            .setDescription('**Customize your adventure experience!**\nAdjust notifications, display options, and gameplay preferences.')
-            .setThumbnail(interaction.user.displayAvatarURL())
-            .addFields([
-                {
-                    name: '🔔 Notifications',
-                    value: `Daily Reminders: **${settings.notifications.dailyReminder ? 'ON' : 'OFF'}**\nDM Notifications: **${settings.notifications.dmNotifications ? 'ON' : 'OFF'}**\nHunt Reminders: **${settings.notifications.huntReminder ? 'ON' : 'OFF'}**`,
-                    inline: true
-                },
-                {
-                    name: '🎨 Display & Theme',
-                    value: `Theme: **${settings.display.theme}**\nEmbed Colors: **${settings.display.embedColors ? 'ON' : 'OFF'}**\nDetailed Stats: **${settings.display.detailedStats ? 'ON' : 'OFF'}**`,
-                    inline: true
-                },
-                {
-                    name: '🎮 Gameplay',
-                    value: `Auto-Claim: **${settings.gameplay.autoClaim ? 'ON' : 'OFF'}**\nQuick Actions: **${settings.gameplay.quickActions ? 'ON' : 'OFF'}**\nTutorial: **${settings.gameplay.showTutorial ? 'ON' : 'OFF'}**`,
-                    inline: true
-                },
-                {
-                    name: '🔒 Privacy & Security',
-                    value: `Profile Visibility: **${settings.privacy.profileVisibility}**\nActivity Tracking: **${settings.privacy.activityTracking ? 'ON' : 'OFF'}**\nData Sharing: **${settings.privacy.dataSharing ? 'ON' : 'OFF'}**`,
-                    inline: true
-                },
-                {
-                    name: '📊 Statistics Tracking',
-                    value: `Detailed Logs: **${settings.statistics.detailedLogs ? 'ON' : 'OFF'}**\nPerformance Metrics: **${settings.statistics.performanceMetrics ? 'ON' : 'OFF'}**\nProgress History: **${settings.statistics.progressHistory ? 'ON' : 'OFF'}**`,
-                    inline: true
-                },
-                {
-                    name: '🌐 Language & Region',
-                    value: `Language: **${settings.language || 'English'}**\nTimezone: **${settings.timezone || 'UTC'}**\nDate Format: **${settings.dateFormat || 'MM/DD/YYYY'}**`,
-                    inline: true
-                }
-            ]);
+        try {
+            const userData = await db.getPlayer(userId);
+            const settings = userData?.settings || this.getDefaultSettings();
             
-        // Add quick settings overview
-        embed.addFields([
-            {
-                name: '⚡ Quick Settings Summary',
-                value: `• Notifications are ${settings.notifications.dailyReminder ? '**enabled**' : '**disabled**'}\n• Display theme is set to **${settings.display.theme}**\n• Privacy level is **${settings.privacy.profileVisibility}**\n• Auto-features are ${settings.gameplay.autoClaim ? '**enabled**' : '**disabled**'}`,
-                inline: false
-            }
-        ]);
-        
-        const categorySelect = new StringSelectMenuBuilder()
-            .setCustomId('settings_category_select')
-            .setPlaceholder('⚙️ Select a settings category...')
-            .addOptions([
-                {
-                    label: 'Notifications',
-                    description: 'Manage alerts and reminders',
-                    value: 'settings_notifications',
-                    emoji: '🔔'
-                },
-                {
-                    label: 'Display & Theme',
-                    description: 'Customize appearance and colors',
-                    value: 'settings_display',
-                    emoji: '🎨'
-                },
-                {
-                    label: 'Gameplay Options',
-                    description: 'Adjust game behavior and features',
-                    value: 'settings_gameplay',
-                    emoji: '🎮'
-                },
-                {
-                    label: 'Privacy & Security',
-                    description: 'Control data and visibility',
-                    value: 'settings_privacy',
-                    emoji: '🔒'
-                },
-                {
-                    label: 'Statistics Tracking',
-                    description: 'Manage data collection preferences',
-                    value: 'settings_statistics',
-                    emoji: '📊'
-                }
-            ]);
+            const embed = new EmbedBuilder()
+                .setColor(config.embedColors?.info || '#3498DB')
+                .setTitle('⚙️ Bot Settings & Preferences')
+                .setDescription('**Customize your adventure experience!**\nAdjust notifications, display options, and gameplay preferences.')
+                .setThumbnail(interaction.user.displayAvatarURL())
+                .addFields([
+                    {
+                        name: '🔔 Notifications',
+                        value: `Daily Reminders: **${settings.notifications.dailyReminder ? '✅ ON' : '❌ OFF'}**\nDM Notifications: **${settings.notifications.dmNotifications ? '✅ ON' : '❌ OFF'}**\nHunt Reminders: **${settings.notifications.huntReminder ? '✅ ON' : '❌ OFF'}**`,
+                        inline: true
+                    },
+                    {
+                        name: '🎨 Display & Theme',
+                        value: `Theme: **${settings.display.theme}**\nEmbed Colors: **${settings.display.embedColors ? '✅ ON' : '❌ OFF'}**\nDetailed Stats: **${settings.display.detailedStats ? '✅ ON' : '❌ OFF'}**`,
+                        inline: true
+                    },
+                    {
+                        name: '🎮 Gameplay',
+                        value: `Auto-Claim: **${settings.gameplay.autoClaim ? '✅ ON' : '❌ OFF'}**\nQuick Actions: **${settings.gameplay.quickActions ? '✅ ON' : '❌ OFF'}**\nTutorial: **${settings.gameplay.showTutorial ? '✅ ON' : '❌ OFF'}**`,
+                        inline: true
+                    },
+                    {
+                        name: '🔒 Privacy & Security',
+                        value: `Profile Visibility: **${settings.privacy.profileVisibility}**\nActivity Tracking: **${settings.privacy.activityTracking ? '✅ ON' : '❌ OFF'}**\nData Sharing: **${settings.privacy.dataSharing ? '✅ ON' : '❌ OFF'}**`,
+                        inline: true
+                    },
+                    {
+                        name: '📊 Statistics Tracking',
+                        value: `Detailed Logs: **${settings.statistics.detailedLogs ? '✅ ON' : '❌ OFF'}**\nPerformance Metrics: **${settings.statistics.performanceMetrics ? '✅ ON' : '❌ OFF'}**\nProgress History: **${settings.statistics.progressHistory ? '✅ ON' : '❌ OFF'}**`,
+                        inline: true
+                    },
+                    {
+                        name: '🌐 Language & Region',
+                        value: `Language: **${settings.language || 'English'}**\nTimezone: **${settings.timezone || 'UTC'}**\nDate Format: **${settings.dateFormat || 'MM/DD/YYYY'}**`,
+                        inline: true
+                    }
+                ])
+                .setFooter({ text: `⚡ Quick tip: Use the dropdown to access specific categories!` })
+                .setTimestamp();
+                
+            const categorySelect = new StringSelectMenuBuilder()
+                .setCustomId('settings_category_select')
+                .setPlaceholder('⚙️ Select a settings category...')
+                .addOptions([
+                    {
+                        label: 'Notifications',
+                        description: 'Manage alerts and reminders',
+                        value: 'notifications',
+                        emoji: '🔔'
+                    },
+                    {
+                        label: 'Display & Theme',
+                        description: 'Customize appearance and colors',
+                        value: 'display',
+                        emoji: '🎨'
+                    },
+                    {
+                        label: 'Gameplay Options',
+                        description: 'Adjust game behavior and features',
+                        value: 'gameplay',
+                        emoji: '🎮'
+                    },
+                    {
+                        label: 'Privacy & Security',
+                        description: 'Control data and visibility',
+                        value: 'privacy',
+                        emoji: '🔒'
+                    },
+                    {
+                        label: 'Statistics Tracking',
+                        description: 'Manage data collection preferences',
+                        value: 'statistics',
+                        emoji: '📊'
+                    }
+                ]);
+                
+            const buttons = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('settings_reset')
+                        .setLabel('🔄 Reset to Default')
+                        .setStyle(ButtonStyle.Secondary),
+                    new ButtonBuilder()
+                        .setCustomId('settings_export')
+                        .setLabel('📤 Export Settings')
+                        .setStyle(ButtonStyle.Secondary),
+                    new ButtonBuilder()
+                        .setCustomId('settings_import')
+                        .setLabel('📥 Import Settings')
+                        .setStyle(ButtonStyle.Secondary),
+                    new ButtonBuilder()
+                        .setCustomId('settings_help')
+                        .setLabel('❓ Help')
+                        .setStyle(ButtonStyle.Success)
+                );
+                
+            const components = [
+                new ActionRowBuilder().addComponents(categorySelect),
+                buttons
+            ];
             
-        const buttons = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId('settings_reset')
-                    .setLabel('🔄 Reset to Default')
-                    .setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder()
-                    .setCustomId('settings_export')
-                    .setLabel('📤 Export Settings')
-                    .setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder()
-                    .setCustomId('settings_help')
-                    .setLabel('❓ Settings Help')
-                    .setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder()
-                    .setCustomId('settings_save')
-                    .setLabel('💾 Save Changes')
-                    .setStyle(ButtonStyle.Success)
-            );
+            await interaction.reply({ embeds: [embed], components });
             
-        const components = [
-            new ActionRowBuilder().addComponents(categorySelect),
-            buttons
-        ];
-        
-        await interaction.reply({ embeds: [embed], components });
+        } catch (error) {
+            console.error('Settings error:', error);
+            await interaction.reply({
+                content: '❌ An error occurred while loading settings. Please try again.',
+                ephemeral: true
+            });
+        }
     },
     
     async showCategorySettings(interaction, category) {
         const userId = interaction.user.id;
-        const userData = await db.getPlayer(userId) || {};
-        const settings = userData.settings || this.getDefaultSettings();
         
-        const categoryData = this.getCategoryData(category, settings);
-        
-        const embed = new EmbedBuilder()
-            .setColor(categoryData.color)
-            .setTitle(`${categoryData.emoji} ${categoryData.name}`)
-            .setDescription(categoryData.description)
-            .setThumbnail(interaction.user.displayAvatarURL());
+        try {
+            const userData = await db.getPlayer(userId);
+            const settings = userData?.settings || this.getDefaultSettings();
+            const categoryData = this.getCategoryData(category, settings);
             
-        // Add category-specific settings
-        categoryData.settings.forEach(setting => {
-            const currentValue = this.getSettingValue(settings, setting.path);
-            embed.addFields([{
-                name: `${setting.emoji} ${setting.name}`,
-                value: `📝 ${setting.description}\n🎯 Current: **${this.formatSettingValue(currentValue, setting.type)}**\n💡 ${setting.hint || 'No additional info'}`,
-                inline: true
-            }]);
+            const embed = new EmbedBuilder()
+                .setColor(categoryData.color)
+                .setTitle(`${categoryData.emoji} ${categoryData.name}`)
+                .setDescription(categoryData.description)
+                .setThumbnail(interaction.user.displayAvatarURL());
+                
+            categoryData.settings.forEach(setting => {
+                const currentValue = this.getSettingValue(settings, setting.path);
+                const status = this.formatSettingValue(currentValue, setting.type);
+                
+                embed.addFields([{
+                    name: `${setting.emoji} ${setting.name}`,
+                    value: `📝 ${setting.description}\n🎯 Current: **${status}**\n💡 ${setting.hint || 'No additional info'}`,
+                    inline: true
+                }]);
+            });
+            
+            const toggleButtons = this.createToggleButtons(category, categoryData.settings);
+            const navButtons = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('settings_main')
+                        .setLabel('← Back to Settings')
+                        .setStyle(ButtonStyle.Secondary),
+                    new ButtonBuilder()
+                        .setCustomId(`settings_save_${category}`)
+                        .setLabel('💾 Save Changes')
+                        .setStyle(ButtonStyle.Success),
+                    new ButtonBuilder()
+                        .setCustomId(`settings_advanced_${category}`)
+                        .setLabel('⚙️ Advanced')
+                        .setStyle(ButtonStyle.Primary)
+                );
+                
+            const components = toggleButtons ? [toggleButtons, navButtons] : [navButtons];
+            
+            await interaction.reply({ embeds: [embed], components });
+            
+        } catch (error) {
+            console.error('Category settings error:', error);
+            await interaction.reply({
+                content: '❌ An error occurred while loading category settings.',
+                ephemeral: true
+            });
+        }
+    },
+    
+    createToggleButtons(category, settings) {
+        const buttons = settings.slice(0, 4).map((setting, index) => {
+            return new ButtonBuilder()
+                .setCustomId(`toggle_${category}_${index}`)
+                .setLabel(`${setting.emoji} Toggle ${setting.name}`)
+                .setStyle(ButtonStyle.Primary);
         });
         
-        // Add category-specific buttons
-        const buttons = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId('settings_main')
-                    .setLabel('← Back to Settings')
-                    .setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder()
-                    .setCustomId(`settings_toggle_${category}`)
-                    .setLabel('🔄 Toggle Options')
-                    .setStyle(ButtonStyle.Primary),
-                new ButtonBuilder()
-                    .setCustomId(`settings_advanced_${category}`)
-                    .setLabel('⚙️ Advanced')
-                    .setStyle(ButtonStyle.Secondary)
-            );
-            
-        await interaction.reply({ embeds: [embed], components: [buttons] });
+        if (buttons.length > 0) {
+            return new ActionRowBuilder().addComponents(buttons);
+        }
+        return null;
     },
     
     getCategoryData(category, settings) {
@@ -467,7 +496,7 @@ module.exports = {
     formatSettingValue(value, type) {
         switch (type) {
             case 'boolean':
-                return value ? 'ON' : 'OFF';
+                return value ? '✅ ON' : '❌ OFF';
             case 'string':
                 return value || 'Not Set';
             case 'select':

@@ -102,25 +102,46 @@ module.exports = {
 
                 activeParties.set(party.id, party);
 
+                const activityNames = {
+                    raid: '⚔️ Dungeon Raid',
+                    expedition: '🗺️ Group Expedition',
+                    siege: '🏰 Castle Siege',
+                    hunt: '🎯 Monster Hunt'
+                };
+
                 const embed = new EmbedBuilder()
                     .setColor('#FFD700')
-                    .setTitle(`👥 New Party Created: ${party.id}`)
-                    .setDescription(`A new party for ${activity} has been created!`)
-                    .addFields(
-                        { name: 'Activity', value: activity, inline: true },
-                        { name: 'Size', value: `${party.members.length}/${maxSize}`, inline: true },
-                        { name: 'Leader', value: interaction.user.tag, inline: true },
-                        { name: 'Status', value: 'Recruiting', inline: true }
-                    )
-                    .setFooter({ text: `Use /party join ${party.id} to join!` });
-
-                const joinButton = new ButtonBuilder()
-                    .setCustomId(`party_join_${party.id}`)
-                    .setLabel('Join Party')
-                    .setStyle(ButtonStyle.Primary);
+                    .setTitle(`👥 New Party Created!`)
+                    .setDescription(`**${interaction.user.displayName}** has created a party for **${activityNames[activity]}**`)
+                    .addFields([
+                        { name: '🆔 Party ID', value: `\`${party.id}\``, inline: true },
+                        { name: '👥 Size', value: `${party.members.length}/${maxSize}`, inline: true },
+                        { name: '📊 Status', value: '🟢 Recruiting', inline: true },
+                        { name: '🎯 Activity', value: activityNames[activity], inline: false },
+                        { name: '💡 How to Join', value: `Use \`/party join ${party.id}\` or click the button below!`, inline: false }
+                    ])
+                    .setThumbnail(interaction.user.displayAvatarURL())
+                    .setTimestamp()
+                    .setFooter({ text: 'Party will expire in 30 minutes if not started' });
 
                 const row = new ActionRowBuilder()
-                    .addComponents(joinButton);
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setCustomId(`party_join_${party.id}`)
+                            .setLabel('Join Party')
+                            .setStyle(ButtonStyle.Success)
+                            .setEmoji('👥'),
+                        new ButtonBuilder()
+                            .setCustomId(`party_info_${party.id}`)
+                            .setLabel('Party Info')
+                            .setStyle(ButtonStyle.Secondary)
+                            .setEmoji('ℹ️'),
+                        new ButtonBuilder()
+                            .setCustomId('party_list')
+                            .setLabel('List All Parties')
+                            .setStyle(ButtonStyle.Secondary)
+                            .setEmoji('📋')
+                    );
 
                 await interaction.editReply({ embeds: [embed], components: [row] });
 

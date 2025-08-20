@@ -1,7 +1,7 @@
 
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require('discord.js');
 const config = require('../../config.js');
-const { db } = require('../../database.js');
+const db = require('../../database.js');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -103,6 +103,15 @@ module.exports = {
             });
         }
 
+        // Check if guild name already exists
+        const existingGuild = await db.getGuildByName(guildName);
+        if (existingGuild) {
+            return await interaction.reply({
+                content: `❌ A guild with the name "${guildName}" already exists! Choose a different name.`,
+                ephemeral: true
+            });
+        }
+
         // Create guild
         const guild = {
             id: `guild_${Date.now()}_${interaction.user.id}`,
@@ -121,16 +130,28 @@ module.exports = {
                 autoAccept: false
             },
             perks: [],
-            activities: []
+            activities: [{
+                type: 'creation',
+                description: `Guild created by ${interaction.user.displayName}`,
+                timestamp: Date.now()
+            }]
         };
 
         // Save guild and update user
-        await db.createGuild(guild);
-        await db.updatePlayer(interaction.user.id, {
-            coins: userData.coins - creationCost,
-            guild: guild.id,
-            guildRole: 'owner'
-        });
+        try {
+            await db.createGuild(guild);
+            await db.updatePlayer(interaction.user.id, {
+                coins: userData.coins - creationCost,
+                guild: guild.id,
+                guildRole: 'owner'
+            });
+        } catch (error) {
+            console.error('Error creating guild:', error);
+            return await interaction.reply({
+                content: '❌ Failed to create guild. Please try again later.',
+                ephemeral: true
+            });
+        }
 
         const embed = new EmbedBuilder()
             .setColor(config.embedColors?.success || '#00FF00')

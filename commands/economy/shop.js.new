@@ -240,59 +240,19 @@ module.exports = {
             const collector = response.createMessageComponentCollector({ filter, time: 60000 });
 
             collector.on('collect', async i => {
-                try {
-                    if (!i.isStringSelectMenu() && !i.isButton()) return;
+                await i.deferUpdate();
 
-                    await i.deferUpdate().catch(() => null);
+                if (i.customId === 'shop_back') {
+                    await this.showMainShop(interaction, userData);
+                    collector.stop();
+                    return;
+                }
 
-                    // Get fresh user data for each interaction
-                    userData = await getUserData(interaction.user.id);
-                    if (!userData) {
-                        await interaction.followUp({ content: '❌ Your profile data could not be loaded.', ephemeral: true });
-                        return;
-                    }
-
-                    if (i.customId === 'shop_back') {
-                        await this.showMainShop(interaction, userData);
+                if (i.customId === 'shop_item') {
+                    const selectedItem = items.find(item => item.id === i.values[0]);
+                    if (selectedItem) {
+                        await this.handlePurchase(interaction, selectedItem.id, 1, userData);
                         collector.stop();
-                        return;
-                    }
-
-                    if (i.customId === 'shop_category') {
-                        await this.showCategory(interaction, i.values[0], userData);
-                        collector.stop();
-                        return;
-                    }
-
-                    if (i.customId === 'shop_item') {
-                        const selectedItem = items.find(item => item.id === i.values[0]);
-                        if (selectedItem) {
-                            await this.handlePurchase(interaction, selectedItem.id, 1, userData);
-                            collector.stop();
-                        } else {
-                            await interaction.followUp({ content: '❌ Item not found.', ephemeral: true });
-                        }
-                        return;
-                    }
-
-                    if (i.customId === 'buy_1' || i.customId === 'buy_5') {
-                        const quantity = i.customId === 'buy_1' ? 1 : 5;
-                        const selectedItem = items.find(item => item.id === i.values[0]);
-                        if (selectedItem) {
-                            await this.handlePurchase(interaction, selectedItem.id, quantity, userData);
-                            collector.stop();
-                        }
-                        return;
-                    }
-                } catch (error) {
-                    console.error('Error in shop interaction:', error);
-                    try {
-                        await interaction.followUp({ 
-                            content: '❌ An error occurred while processing your request. Please try again.', 
-                            ephemeral: true 
-                        });
-                    } catch (e) {
-                        console.error('Failed to send error message:', e);
                     }
                 }
             });

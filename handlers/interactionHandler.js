@@ -20,7 +20,7 @@ class InteractionHandler {
         this.modalHandlers = new Collection();
         this.autocompleteHandlers = new Collection();
         this.contextMenuHandlers = new Collection();
-        
+
         // Cooldown management
         this.cooldowns = new Collection();
 
@@ -29,7 +29,7 @@ class InteractionHandler {
 
         // Register default button handler
         this.buttonHandlers.set('default', require('./buttonHandler.js').handleButtonInteraction);
-        
+
         // Metrics and monitoring
         this.metrics = {
             commandsExecuted: 0,
@@ -234,14 +234,14 @@ class InteractionHandler {
         } catch (error) {
             console.error('Critical error in interaction handler:', error);
             await this.handleInteractionError(interaction, error);
-            
+
             if (this.options.enableMetrics) {
                 this.metrics.errors++;
             }
         } finally {
             // Clean up tracking
             this.activeInteractions.delete(interactionId);
-            
+
             // Log performance if debug enabled
             if (this.options.enableDebug) {
                 const duration = Date.now() - startTime;
@@ -256,7 +256,7 @@ class InteractionHandler {
      */
     async handleSlashCommand(interaction) {
         const command = this.commands.get(interaction.commandName);
-        
+
         if (!command) {
             await this.safeReply(interaction, {
                 content: '❌ Command not found or not properly loaded.',
@@ -318,7 +318,7 @@ class InteractionHandler {
 
             // Execute command
             await command.execute(interaction);
-            
+
             if (this.options.enableMetrics) {
                 this.metrics.commandsExecuted++;
             }
@@ -335,16 +335,28 @@ class InteractionHandler {
      */
     async handleButton(interaction) {
         try {
+            // First, try the default button handler
+            const defaultButtonHandler = require('./buttonHandler.js');
+            if (defaultButtonHandler.handleButtonInteraction) {
+                await defaultButtonHandler.handleButtonInteraction(interaction);
+                if (this.options.enableMetrics) {
+                    this.metrics.buttonsHandled++;
+                }
+                return;
+            }
+
+            // Fallback to parsing customId
             const { handler, commandName, action } = this.parseCustomId(interaction.customId, 'button');
-            
+
             if (handler) {
-                await handler(interaction, action);
+                await handler(interaction, action?.split('_') || [], interaction.user.id);
                 if (this.options.enableMetrics) {
                     this.metrics.buttonsHandled++;
                 }
             } else {
+                console.warn(`No handler found for button: ${interaction.customId}`);
                 await this.safeReply(interaction, {
-                    content: '❌ This button action is no longer available.',
+                    content: '❌ This button action is no longer available. Please try using the command again.',
                     ephemeral: true
                 });
             }
@@ -361,16 +373,34 @@ class InteractionHandler {
      */
     async handleSelectMenu(interaction) {
         try {
+            const selectedValue = interaction.values[0];
             const { handler, commandName, action } = this.parseCustomId(interaction.customId, 'selectMenu');
-            
+
             if (handler) {
-                await handler(interaction, action);
+                await handler(interaction, selectedValue, interaction.user.id);
                 if (this.options.enableMetrics) {
                     this.metrics.selectMenusHandled++;
                 }
             } else {
+                // Try to route based on selected value
+                const [valueCommand, ...valueAction] = selectedValue.split('_');
+                const command = this.commands.get(valueCommand);
+
+                if (command?.selectMenuHandlers) {
+                    const valueHandler = command.selectMenuHandlers[valueAction.join('_')] || 
+                                       command.selectMenuHandlers.default;
+                    if (valueHandler) {
+                        await valueHandler.call(command, interaction);
+                        if (this.options.enableMetrics) {
+                            this.metrics.selectMenusHandled++;
+                        }
+                        return;
+                    }
+                }
+
+                console.warn(`No handler found for select menu: ${interaction.customId} with value: ${selectedValue}`);
                 await this.safeReply(interaction, {
-                    content: '❌ This menu action is no longer available.',
+                    content: '❌ This menu selection is no longer available. Please try using the command again.',
                     ephemeral: true
                 });
             }
@@ -388,7 +418,7 @@ class InteractionHandler {
     async handleModal(interaction) {
         try {
             const { handler, commandName, action } = this.parseCustomId(interaction.customId, 'modal');
-            
+
             if (handler) {
                 await handler(interaction, action);
                 if (this.options.enableMetrics) {
@@ -442,7 +472,7 @@ class InteractionHandler {
     async handleContextMenu(interaction) {
         try {
             const command = this.commands.get(interaction.commandName);
-            
+
             if (command?.execute) {
                 await command.execute(interaction);
                 if (this.options.enableMetrics) {
@@ -489,20 +519,36 @@ class InteractionHandler {
 
         const collection = handlerCollections[type];
         if (collection) {
-            // Special handling for manage command buttons
-            if (commandName === 'manage') {
-                const buttonHandler = require('./buttonHandler.js');
-                handler = buttonHandler.handleButtonInteraction.bind(buttonHandler);
-            }
             // Try exact match first
             handler = collection.get(customId);
-            
+
+            // Special routing for different command types
+            if (!handler) {
+                // Try with command prefix
+                handler = collection.get(`${commandName}_${action}`);
+            }
+
             // Fallback to command-based handler
             if (!handler) {
                 const command = this.commands.get(commandName);
                 if (command) {
-                    const methodName = `handle${type.charAt(0).toUpperCase() + type.slice(1)}`;
-                    handler = command[methodName]?.bind(command);
+                    // Try specific handler method
+                    const methodName = `${type}Handlers`;
+                    if (command[methodName] && command[methodName][action]) {
+                        handler = command[methodName][action].bind(command);
+                    } else {
+                        // Try generic handler method
+                        const genericMethodName = `handle${type.charAt(0).toUpperCase() + type.slice(1)}`;
+                        handler = command[genericMethodName]?.bind(command);
+                    }
+                }
+            }
+
+            // Special handling for default handlers
+            if (!handler && type === 'button') {
+                const defaultButtonHandler = require('./buttonHandler.js');
+                if (defaultButtonHandler.handleButtonInteraction) {
+                    handler = defaultButtonHandler.handleButtonInteraction;
                 }
             }
         }
@@ -641,13 +687,13 @@ class InteractionHandler {
      */
     createBasicCooldownManager() {
         const cooldowns = new Collection();
-        
+
         return {
             checkCooldown: (commandName, userId) => {
                 const key = `${commandName}_${userId}`;
                 const cooldownEnd = cooldowns.get(key);
                 if (!cooldownEnd) return null;
-                
+
                 const timeLeft = Math.ceil((cooldownEnd - Date.now()) / 1000);
                 return timeLeft > 0 ? timeLeft : null;
             },
@@ -690,7 +736,7 @@ class InteractionHandler {
             if (this.handlerCache.size > this.options.maxHandlerCache * 0.8) {
                 const entriesToRemove = Math.floor(this.handlerCache.size * 0.2);
                 const entries = Array.from(this.handlerCache.keys());
-                
+
                 for (let i = 0; i < entriesToRemove; i++) {
                     this.handlerCache.delete(entries[i]);
                 }
@@ -753,7 +799,7 @@ class InteractionHandler {
         if (this.cleanupTimer) {
             clearInterval(this.cleanupTimer);
         }
-        
+
         this.commands.clear();
         this.buttonHandlers.clear();
         this.selectMenuHandlers.clear();

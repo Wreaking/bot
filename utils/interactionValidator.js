@@ -1,6 +1,7 @@
+
 /**
- * Interaction Validation Utilities
- * Provides validation and error handling for Discord interactions
+ * Enhanced Interaction Validation Utilities
+ * Provides comprehensive validation and error handling for Discord interactions
  */
 
 const { EmbedBuilder, MessageFlags } = require('discord.js');
@@ -8,128 +9,178 @@ const config = require('../config.js');
 
 module.exports = {
     /**
-     * Validate button interaction
+     * Validate button interaction with enhanced checks
      * @param {Object} interaction - Discord button interaction
-     * @returns {Boolean} - Whether interaction is valid
+     * @returns {Object} - Validation result with details
      */
     validateButtonInteraction(interaction) {
+        const result = {
+            valid: false,
+            errors: [],
+            warnings: []
+        };
+
         try {
             // Check if interaction exists
             if (!interaction) {
-                console.warn('Button interaction validation failed: No interaction provided');
-                return false;
+                result.errors.push('No interaction provided');
+                return result;
             }
 
             // Check if it's a button interaction
             if (!interaction.isButton || !interaction.isButton()) {
-                console.warn('Invalid interaction type for button handler');
-                return false;
+                result.errors.push('Invalid interaction type for button handler');
+                return result;
             }
 
             // Check for customId
             if (!interaction.customId) {
-                console.warn('Button interaction missing customId');
-                return false;
+                result.errors.push('Button interaction missing customId');
+                return result;
             }
 
             // Check for user information
             if (!interaction.user || !interaction.user.id) {
-                console.warn('Button interaction missing user information');
-                return false;
+                result.errors.push('Button interaction missing user information');
+                return result;
             }
 
             // Check if interaction is valid (not expired)
             const now = Date.now();
             const interactionTime = interaction.createdTimestamp || now;
             if (now - interactionTime > 15 * 60 * 1000) { // 15 minutes
-                console.warn('Button interaction expired');
-                return false;
+                result.errors.push('Button interaction expired');
+                return result;
             }
 
-            return true;
+            // Check if interaction can be replied to
+            if (!interaction.isRepliable()) {
+                result.warnings.push('Interaction may not be repliable');
+            }
+
+            result.valid = true;
+            return result;
+
         } catch (error) {
             console.error('Error validating button interaction:', error);
-            return false;
+            result.errors.push(`Validation error: ${error.message}`);
+            return result;
         }
     },
 
     /**
-     * Validate select menu interaction
+     * Validate select menu interaction with enhanced checks
      * @param {Object} interaction - Discord select menu interaction
-     * @returns {Boolean} - Whether interaction is valid
+     * @returns {Object} - Validation result with details
      */
     validateSelectMenuInteraction(interaction) {
+        const result = {
+            valid: false,
+            errors: [],
+            warnings: []
+        };
+
         try {
             // Check if interaction exists
             if (!interaction) {
-                console.warn('Select menu interaction validation failed: No interaction provided');
-                return false;
+                result.errors.push('No interaction provided');
+                return result;
             }
 
             // Check if it's a select menu interaction
             if (!interaction.isStringSelectMenu || !interaction.isStringSelectMenu()) {
-                console.warn('Invalid interaction type for select menu handler');
-                return false;
+                result.errors.push('Invalid interaction type for select menu handler');
+                return result;
             }
 
             // Check for values
             if (!interaction.values || !Array.isArray(interaction.values) || !interaction.values[0]) {
-                console.warn('Select menu interaction missing values');
-                return false;
+                result.errors.push('Select menu interaction missing or invalid values');
+                return result;
             }
 
             // Check for user information
             if (!interaction.user || !interaction.user.id) {
-                console.warn('Select menu interaction missing user information');
-                return false;
+                result.errors.push('Select menu interaction missing user information');
+                return result;
             }
 
             // Check if interaction is valid (not expired)
             const now = Date.now();
             const interactionTime = interaction.createdTimestamp || now;
             if (now - interactionTime > 15 * 60 * 1000) { // 15 minutes
-                console.warn('Select menu interaction expired');
-                return false;
+                result.errors.push('Select menu interaction expired');
+                return result;
             }
 
-            return true;
+            // Check if interaction can be replied to
+            if (!interaction.isRepliable()) {
+                result.warnings.push('Interaction may not be repliable');
+            }
+
+            result.valid = true;
+            return result;
+
         } catch (error) {
             console.error('Error validating select menu interaction:', error);
-            return false;
+            result.errors.push(`Validation error: ${error.message}`);
+            return result;
         }
     },
 
     /**
-     * Validate any interaction
+     * Validate any interaction with comprehensive checks
      * @param {Object} interaction - Discord interaction
-     * @returns {Boolean} - Whether interaction is valid
+     * @returns {Object} - Validation result with details
      */
     validateInteraction(interaction) {
+        const result = {
+            valid: false,
+            errors: [],
+            warnings: []
+        };
+
         try {
             if (!interaction) {
-                console.warn('Interaction validation failed: No interaction provided');
-                return false;
+                result.errors.push('No interaction provided');
+                return result;
             }
 
             if (!interaction.user || !interaction.user.id) {
-                console.warn('Interaction missing user information');
-                return false;
+                result.errors.push('Interaction missing user information');
+                return result;
             }
 
             if (!interaction.guild && !interaction.channel) {
-                console.warn('Interaction missing guild or channel information');
-                return false;
+                result.errors.push('Interaction missing guild or channel information');
+                return result;
             }
 
-            return true;
+            // Check if interaction is expired
+            const now = Date.now();
+            const interactionTime = interaction.createdTimestamp || now;
+            if (now - interactionTime > 15 * 60 * 1000) {
+                result.errors.push('Interaction has expired');
+                return result;
+            }
+
+            // Check if interaction can be replied to
+            if (!interaction.isRepliable()) {
+                result.warnings.push('Interaction may not be repliable');
+            }
+
+            result.valid = true;
+            return result;
+
         } catch (error) {
             console.error('Error validating interaction:', error);
-            return false;
+            result.errors.push(`Validation error: ${error.message}`);
+            return result;
         }
     },
 
     /**
-     * Handle interaction timeout
+     * Handle interaction timeout with multiple fallback methods
      * @param {Object} interaction - Discord interaction
      */
     async handleInteractionTimeout(interaction) {
@@ -139,24 +190,32 @@ module.exports = {
         }
 
         try {
-            const timeoutMessage = {
-                content: '⏰ This interaction has timed out. Please try the command again.',
+            const timeoutEmbed = new EmbedBuilder()
+                .setColor(config?.embedColors?.warning || '#FFA500')
+                .setTitle('⏰ Interaction Timeout')
+                .setDescription('This interaction has timed out. Please try the command again.')
+                .setTimestamp();
+
+            const timeoutOptions = {
+                embeds: [timeoutEmbed],
                 components: []
             };
 
             if (interaction.replied || interaction.deferred) {
-                await interaction.editReply(timeoutMessage);
+                await interaction.editReply(timeoutOptions);
             } else {
-                timeoutMessage.flags = MessageFlags.Ephemeral;
-                await interaction.reply(timeoutMessage);
+                timeoutOptions.flags = MessageFlags.Ephemeral;
+                await interaction.reply(timeoutOptions);
             }
         } catch (error) {
             console.error('Error handling interaction timeout:', error);
             
-            // Try channel fallback
+            // Try simple text fallback
             try {
+                const simpleMessage = '⏰ This interaction has timed out. Please try again.';
+                
                 if (interaction.channel) {
-                    await interaction.channel.send('⏰ Interaction timed out. Please try again.');
+                    await interaction.channel.send(simpleMessage);
                 }
             } catch (channelError) {
                 console.error('Channel fallback for timeout also failed:', channelError);
@@ -165,7 +224,7 @@ module.exports = {
     },
 
     /**
-     * Handle interaction error with user-friendly message
+     * Handle interaction error with comprehensive error response
      * @param {Object} interaction - Discord interaction
      * @param {Error} error - Error object
      * @param {String} context - Error context for logging
@@ -187,6 +246,7 @@ module.exports = {
             .setDescription('An error occurred while processing your interaction. Please try again.')
             .addFields([
                 { name: 'Context', value: safeContext, inline: true },
+                { name: 'Error Type', value: error?.name || 'Unknown', inline: true },
                 { name: 'Timestamp', value: `<t:${Math.floor(Date.now() / 1000)}:f>`, inline: true }
             ])
             .setFooter({ text: 'If this error persists, please contact support.' });
@@ -217,105 +277,70 @@ module.exports = {
     },
 
     /**
-     * Check if user has required permissions
+     * Check if user has required permissions with detailed validation
      * @param {Object} interaction - Discord interaction
      * @param {Array} requiredPermissions - Required permission strings
-     * @returns {Boolean} - Whether user has permissions
+     * @returns {Object} - Permission check result
      */
     checkUserPermissions(interaction, requiredPermissions = []) {
+        const result = {
+            hasPermissions: false,
+            missingPermissions: [],
+            errors: []
+        };
+
         try {
             // Early returns for basic validation
             if (!interaction) {
-                console.warn('Cannot check permissions: No interaction provided');
-                return false;
+                result.errors.push('No interaction provided');
+                return result;
             }
 
             if (!Array.isArray(requiredPermissions) || requiredPermissions.length === 0) {
-                return true; // No permissions required
+                result.hasPermissions = true;
+                return result; // No permissions required
             }
 
             // Check if it's a DM (no member object in DMs)
             if (!interaction.guild) {
-                console.warn('Cannot check permissions in DM');
-                return true; // Allow in DMs by default
+                result.hasPermissions = true;
+                return result; // Allow in DMs by default
             }
 
             if (!interaction.member) {
-                console.warn('No member object found for permission check');
-                return false;
+                result.errors.push('No member object found for permission check');
+                return result;
             }
 
             if (!interaction.member.permissions) {
-                console.warn('No permissions object found on member');
-                return false;
+                result.errors.push('No permissions object found on member');
+                return result;
             }
 
             // Check if user has all required permissions
-            return requiredPermissions.every(permission => {
+            for (const permission of requiredPermissions) {
                 try {
-                    return interaction.member.permissions.has(permission);
+                    if (!interaction.member.permissions.has(permission)) {
+                        result.missingPermissions.push(permission);
+                    }
                 } catch (permError) {
                     console.error(`Error checking permission ${permission}:`, permError);
-                    return false;
+                    result.errors.push(`Error checking permission: ${permission}`);
                 }
-            });
+            }
+
+            result.hasPermissions = result.missingPermissions.length === 0;
+            return result;
+
         } catch (error) {
             console.error('Error checking user permissions:', error);
-            return false;
+            result.errors.push(`Permission check error: ${error.message}`);
+            return result;
         }
     },
 
     /**
-     * Create a safe interaction response for debugging
-     * @param {Object} interaction - Discord interaction
-     * @param {String} message - Debug message
-     */
-    async debugResponse(interaction, message) {
-        if (!interaction) {
-            console.error('Cannot send debug response: No interaction provided');
-            return;
-        }
-
-        try {
-            const safeMessage = String(message || 'No debug message provided').substring(0, 4096);
-
-            const debugEmbed = new EmbedBuilder()
-                .setColor('#FFA500')
-                .setTitle('🔍 Debug Information')
-                .setDescription(safeMessage)
-                .setTimestamp();
-
-            const debugResponse = { embeds: [debugEmbed] };
-
-            if (interaction.replied || interaction.deferred) {
-                await interaction.editReply(debugResponse);
-            } else {
-                debugResponse.flags = MessageFlags.Ephemeral;
-                await interaction.reply(debugResponse);
-            }
-        } catch (error) {
-            console.error('Debug response failed:', error);
-            
-            // Simple fallback
-            try {
-                const fallbackMessage = `🔍 Debug: ${String(message).substring(0, 100)}`;
-                
-                if (interaction.replied || interaction.deferred) {
-                    await interaction.editReply({ content: fallbackMessage });
-                } else {
-                    await interaction.reply({ 
-                        content: fallbackMessage, 
-                        flags: MessageFlags.Ephemeral 
-                    });
-                }
-            } catch (fallbackError) {
-                console.error('Debug fallback also failed:', fallbackError);
-            }
-        }
-    },
-
-    /**
-     * Safe wrapper for interaction responses
+     * Safe interaction response with comprehensive error handling
      * @param {Object} interaction - Discord interaction
      * @param {Object} options - Response options
      * @returns {Promise} - Response promise
@@ -330,12 +355,16 @@ module.exports = {
         }
 
         try {
+            // Check interaction state and respond accordingly
             if (!interaction.replied && !interaction.deferred) {
                 return await interaction.reply(options);
             } else if (interaction.deferred && !interaction.replied) {
                 return await interaction.editReply(options);
             } else {
-                return await interaction.followUp(options);
+                // Use followUp for already replied interactions
+                const followUpOptions = { ...options };
+                followUpOptions.flags = MessageFlags.Ephemeral;
+                return await interaction.followUp(followUpOptions);
             }
         } catch (error) {
             console.error('Safe interaction reply failed:', error);
@@ -392,5 +421,20 @@ module.exports = {
             console.error('Error getting user display name:', error);
             return 'Unknown User';
         }
+    },
+
+    /**
+     * Create safe embed fields with validation
+     * @param {String} name - Field name
+     * @param {String} value - Field value
+     * @param {Boolean} inline - Whether field is inline
+     * @returns {Object} - Safe embed field
+     */
+    createSafeEmbedField(name, value, inline = false) {
+        return {
+            name: String(name || 'Unknown').substring(0, 256),
+            value: String(value || 'N/A').substring(0, 1024),
+            inline: Boolean(inline)
+        };
     }
 };

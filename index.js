@@ -24,14 +24,40 @@ try {
 }
 
 // Validate environment variables
-if (!process.env.DISCORD_BOT_TOKEN) {
-    console.error('❌ DISCORD_BOT_TOKEN is not set in environment variables');
-    process.exit(1);
-}
+function validateEnvironment() {
+    const requiredVars = ['DISCORD_BOT_TOKEN'];
+    const missing = requiredVars.filter(varName => !process.env[varName]);
 
-if (!process.env.DISCORD_CLIENT_ID) {
-    console.error('❌ DISCORD_CLIENT_ID is not set in environment variables');
-    process.exit(1);
+    if (missing.length > 0) {
+        console.error('❌ Missing required environment variables:', missing.join(', '));
+        console.error('📝 Please check your .env file and ensure all required variables are set.');
+        console.error('💡 Your .env file should contain: DISCORD_BOT_TOKEN=your_bot_token_here');
+        process.exit(1);
+    }
+
+    // Enhanced token format validation
+    const token = process.env.DISCORD_BOT_TOKEN;
+    if (token) {
+        if (token.length < 50) {
+            console.error('❌ Discord bot token appears to be too short. Please check your token.');
+            console.error('💡 Valid bot tokens are usually 70+ characters long.');
+            console.error('📝 Example format: MTIzNDU2Nzg5MDEyMzQ1Njc4OQ.GaBcDe.FgHiJkLmNoPqRsTuVwXyZaBcDeFgHiJkLmNoPqRsT');
+            process.exit(1);
+        }
+        
+        if (!token.includes('.')) {
+            console.error('❌ Discord bot token format appears invalid. Tokens should contain dots (.)');
+            console.error('💡 Make sure you copied the bot token (not client ID or client secret)');
+            console.error('📝 Get your bot token from: https://discord.com/developers/applications');
+            process.exit(1);
+        }
+        
+        if (token === 'MTIzNDU2Nzg5MDEyMzQ1Njc4OQ.GaBcDe.FgHiJkLmNoPqRsTuVwXyZaBcDeFgHiJkLmNoPqRsT') {
+            console.error('❌ You are using the example token. Please replace it with your actual bot token.');
+            console.error('📝 Get your real bot token from: https://discord.com/developers/applications');
+            process.exit(1);
+        }
+    }
 }
 
 // Create a new client instance with enhanced intents
@@ -62,12 +88,29 @@ function safeRequire(modulePath, fallback = null) {
     }
 }
 
-// Load command files dynamically from all subdirectories
-function loadCommands(dir, categoryMap = new Map()) {
+// Load command files using enhanced command loader
+const CommandLoader = safeRequire('./utils/commandLoader.js');
+
+function loadCommands(dir) {
+    if (CommandLoader) {
+        try {
+            const loader = new CommandLoader(client);
+            return loader.loadAllCommands(dir);
+        } catch (error) {
+            console.error('❌ Command loader failed, falling back to basic loader:', error.message);
+            return loadCommandsFallback(dir);
+        }
+    } else {
+        return loadCommandsFallback(dir);
+    }
+}
+
+// Fallback command loading function
+function loadCommandsFallback(dir, categoryMap = new Map()) {
     let loadedCommands = 0;
     let failedCommands = 0;
     let skippedFiles = 0;
-    
+
     // Check if commands directory exists
     if (!fs.existsSync(dir)) {
         console.warn(`⚠️ Commands directory not found: ${dir}`);
@@ -79,21 +122,21 @@ function loadCommands(dir, categoryMap = new Map()) {
         }
         return { loaded: 0, failed: 0, skipped: 0 };
     }
-    
+
     const files = fs.readdirSync(dir, { withFileTypes: true });
-    
+
     // Get the category name from the directory path
     const category = path.relative(path.join(__dirname, 'commands'), dir).split(path.sep)[0] || 'general';
-    
+
     if (!categoryMap.has(category)) {
         categoryMap.set(category, { loaded: 0, commands: [] });
     }
-    
+
     console.log(`\n📂 Scanning category: ${category}`);
-    
+
     for (const file of files) {
         const fullPath = path.join(dir, file.name);
-        
+
         if (file.isDirectory()) {
             const subDirStats = loadCommands(fullPath, categoryMap);
             loadedCommands += subDirStats.loaded;
@@ -104,7 +147,7 @@ function loadCommands(dir, categoryMap = new Map()) {
                 // Clear require cache to avoid stale modules
                 delete require.cache[require.resolve(fullPath)];
                 const command = require(fullPath);
-                
+
                 if (command && typeof command === 'object' && 'data' in command && 'execute' in command) {
                     // Validate command data structure
                     if (!command.data.name || !command.data.description) {
@@ -113,15 +156,15 @@ function loadCommands(dir, categoryMap = new Map()) {
                         skippedFiles++;
                         continue;
                     }
-                    
+
                     client.commands.set(command.data.name, command);
                     // Also register as prefix command
                     client.prefixCommands.set(command.data.name, command);
-                    
+
                     // Add command to category tracking
                     categoryMap.get(category).loaded++;
                     categoryMap.get(category).commands.push(command.data.name);
-                    
+
                     console.log(`   ✅ Loaded: ${command.data.name}`);
                     console.log(`      📍 Path: ${fullPath}`);
                     console.log(`      📝 Description: ${command.data.description}`);
@@ -138,14 +181,14 @@ function loadCommands(dir, categoryMap = new Map()) {
             }
         }
     }
-    
+
     // Only show summary for top-level directory
     if (dir.endsWith('commands')) {
         console.log('\n📊 Command Loading Summary:');
         console.log(`   ✅ Successfully loaded: ${loadedCommands} commands`);
         console.log(`   ❌ Failed to load: ${failedCommands} commands`);
         console.log(`   ⚠️ Skipped files: ${skippedFiles}\n`);
-        
+
         // Show category breakdown
         if (categoryMap.size > 0) {
             console.log('📑 Category Breakdown:');
@@ -156,7 +199,7 @@ function loadCommands(dir, categoryMap = new Map()) {
             }
         }
     }
-    
+
     return {
         loaded: loadedCommands,
         failed: failedCommands,
@@ -177,14 +220,14 @@ client.once('ready', async () => {
     console.log(`🌟 Active in ${client.guilds.cache.size} servers`);
     console.log(`⚔️ Serving ${client.users.cache.size} adventurers`);
     console.log('='.repeat(60));
-    
+
     // Register slash commands with enhanced syncing
     if (client.commands.size > 0) {
         await registerCommands();
     } else {
         console.warn('⚠️ No commands loaded, skipping command registration');
     }
-    
+
     // Force command cache refresh
     setTimeout(async () => {
         try {
@@ -196,7 +239,7 @@ client.once('ready', async () => {
             console.error('❌ Failed to refresh command cache:', error.message);
         }
     }, 5000);
-    
+
     // Set bot status with gaming theme
     const activities = [
         { name: 'Epic Treasure Hunts', type: ActivityType.Playing },
@@ -205,12 +248,12 @@ client.once('ready', async () => {
         { name: 'Dungeon Raids', type: ActivityType.Competing },
         { name: 'Treasure Maps', type: ActivityType.Watching }
     ];
-    
+
     let activityIndex = 0;
-    
+
     // Set initial activity
     client.user.setActivity(activities[activityIndex]);
-    
+
     // Rotate activities every 30 seconds
     setInterval(() => {
         activityIndex = (activityIndex + 1) % activities.length;
@@ -251,7 +294,7 @@ async function registerCommands() {
         );
 
         console.log(`✅ Successfully reloaded ${commands.length} global application (/) commands.`);
-        
+
         // Also register for each guild for instant updates during development
         const guilds = Array.from(client.guilds.cache.values());
         if (guilds.length > 0) {
@@ -267,11 +310,11 @@ async function registerCommands() {
                 }
             }
         }
-        
+
         console.log('🎉 Command registration complete! Commands should be visible immediately.');
     } catch (error) {
         console.error('❌ Error registering commands:', error.message);
-        
+
         // Fallback: Try to register for current guild only
         if (client.guilds.cache.size > 0) {
             try {
@@ -319,7 +362,7 @@ client.on('interactionCreate', async (interaction) => {
 async function handleInteractionFallback(interaction) {
     if (interaction.isChatInputCommand()) {
         const command = client.commands.get(interaction.commandName);
-        
+
         if (!command) {
             await interaction.reply({
                 content: `❌ Command \`${interaction.commandName}\` not found!`,
@@ -351,7 +394,7 @@ async function handleInteractionError(interaction, error) {
             content: '❌ An error occurred while processing your request. Please try again.',
             ephemeral: true
         };
-        
+
         if (!interaction.replied && !interaction.deferred) {
             await interaction.reply(errorMessage);
         } else if (interaction.deferred) {
@@ -376,7 +419,7 @@ async function handleSelectMenuInteraction(interaction) {
         }
 
         const [action, ...args] = interaction.values[0].split('_');
-        
+
         const commandMap = {
             'help': 'help',
             'shop': 'shop',
@@ -407,7 +450,7 @@ async function handleSelectMenuInteraction(interaction) {
 
         const commandName = commandMap[action];
         const command = client.commands.get(commandName);
-        
+
         if (command && command.handleSelectMenu) {
             await command.handleSelectMenu(interaction, args.join('_'));
         } else if (command && action === 'help' && command.showCategoryHelp) {
@@ -421,7 +464,7 @@ async function handleSelectMenuInteraction(interaction) {
         }
     } catch (error) {
         console.error('Select menu error:', error);
-        
+
         // Try to load robust error handler if available
         const RobustErrorHandler = safeRequire('./utils/robustErrorHandler.js');
         if (RobustErrorHandler && RobustErrorHandler.handleSelectMenuError) {
@@ -438,7 +481,7 @@ async function handleSelectMenuInteraction(interaction) {
 // Prefix command handler for v! commands
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
-    
+
     const prefix = config.prefix || 'v!';
     if (!message.content.startsWith(prefix)) return;
 
@@ -453,7 +496,7 @@ client.on('messageCreate', async (message) => {
     // Create enhanced interaction for prefix commands
     const InteractionFixer = safeRequire('./utils/interactionFixer.js');
     let fakeInteraction;
-    
+
     if (InteractionFixer && InteractionFixer.createPrefixInteraction) {
         fakeInteraction = InteractionFixer.createPrefixInteraction(message, client, commandName);
     } else {
@@ -489,12 +532,12 @@ client.on('messageCreate', async (message) => {
         await command.execute(fakeInteraction);
     } catch (error) {
         console.error(`Error executing prefix command ${commandName}:`, error.message);
-        
+
         const RobustErrorHandler = safeRequire('./utils/robustErrorHandler.js');
         if (RobustErrorHandler && RobustErrorHandler.logError) {
             RobustErrorHandler.logError(error, `Prefix command: ${commandName}`);
         }
-        
+
         const errorEmbed = new EmbedBuilder()
             .setColor(config.embedColors?.error || 0xFF0000)
             .setTitle('❌ Prefix Command Error')
@@ -559,14 +602,14 @@ process.on('uncaughtException', error => {
 // Graceful shutdown handling
 async function gracefulShutdown(signal) {
     console.log(`Received ${signal}. Graceful shutdown...`);
-    
+
     try {
         // Clear any active intervals
         clearInterval();
-        
+
         // Destroy client connection
         client.destroy();
-        
+
         console.log('✅ Graceful shutdown completed');
     } catch (error) {
         console.error('Error during shutdown:', error.message);
@@ -580,11 +623,12 @@ process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 // Login to Discord with enhanced error handling
 async function startBot() {
+    validateEnvironment(); // Call the validation function before login
     try {
         await client.login(process.env.DISCORD_BOT_TOKEN);
     } catch (error) {
         console.error('❌ Failed to login to Discord:', error.message);
-        
+
         if (error.code === 'TokenInvalid') {
             console.error('❌ Invalid bot token. Please check your DISCORD_BOT_TOKEN environment variable.');
         } else if (error.code === 'DisallowedIntents') {
@@ -592,7 +636,7 @@ async function startBot() {
         } else {
             console.error('❌ Login failed with error code:', error.code);
         }
-        
+
         process.exit(1);
     }
 }

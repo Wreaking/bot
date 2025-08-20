@@ -1,619 +1,318 @@
-const { Collection, PermissionsBitField, EmbedBuilder } = require('discord.js');
 
-class EnhancedErrorHandler {
-    constructor(options = {}) {
-        this.options = {
-            // Error handling settings
-            useEmbeds: options.useEmbeds !== false,
-            logToConsole: options.logToConsole !== false,
-            logToFile: options.logToFile || false,
-            maxRetries: options.maxRetries || 3,
-            retryDelay: options.retryDelay || 1000,
-            
-            // Cooldown settings
-            defaultCooldown: options.defaultCooldown || 3,
-            maxCooldownsInMemory: options.maxCooldownsInMemory || 10000,
-            
-            // Response settings
-            ephemeralErrors: options.ephemeralErrors !== false,
-            includeErrorCode: options.includeErrorCode || false,
-            customErrorMessages: options.customErrorMessages || {},
-            
-            // Database settings
-            useDatabase: options.useDatabase || false,
-            database: options.database || null,
-            
-            ...options
-        };
+const { EmbedBuilder } = require('discord.js');
 
-        // In-memory cooldown storage (fallback)
-        this.cooldowns = new Collection();
-        this.errorCounts = new Collection();
-        this.retryQueue = new Collection();
-        
-        // Error logging
-        this.errorLog = [];
-        this.maxLogEntries = options.maxLogEntries || 1000;
-        
-        // Auto-cleanup for memory management
-        if (options.autoCleanup !== false) {
-            this.startAutoCleanup();
-        }
+class CommandErrorHandler {
+    constructor() {
+        this.errorCounts = new Map();
+        this.rateLimitMap = new Map();
     }
 
     /**
-     * Handle command errors gracefully with enhanced features
-     * @param {Interaction} interaction - The Discord interaction
+     * Handle command execution errors
+     * @param {CommandInteraction} interaction - Discord interaction
      * @param {Error} error - The error that occurred
-     * @param {string} commandName - The name of the command that failed
-     * @param {Object} options - Additional options
+     * @param {string} commandName - Name of the command
      */
-    async handleCommandError(interaction, error, commandName, options = {}) {
+    async handleCommandError(interaction, error, commandName) {
         try {
-            // Log the error
-            this.logError(error, commandName, interaction);
+            console.error(`Command Error in ${commandName}:`, error);
+
+            // Rate limiting for error messages
+            const userId = interaction.user.id;
+            const rateLimitKey = `${userId}_${commandName}`;
             
-            // Check if this is a retryable error
-            if (this.isRetryableError(error) && options.retry !== false) {
-                const retryResult = await this.handleRetry(interaction, error, commandName);
-                if (retryResult.success) return;
+            if (this.isRateLimited(rateLimitKey)) {
+                return; // Don't spam error messages
             }
 
-            const errorInfo = this.parseError(error);
-            const customMessage = this.options.customErrorMessages[errorInfo.type] || errorInfo.message;
-            
-            // Create response
-            const response = await this.createErrorResponse(
-                customMessage, 
-                commandName, 
-                errorInfo,
-                options
-            );
+            this.setRateLimit(rateLimitKey);
 
-            // Send error response
-            await this.sendErrorResponse(interaction, response);
+            // Categorize error types
+            const errorType = this.categorizeError(error);
+            const errorEmbed = this.createErrorEmbed(errorType, commandName, error);
+
+            // Track error frequency
+            this.trackError(commandName, errorType);
+
+            // Send appropriate response
+            await this.safeErrorReply(interaction, errorEmbed);
 
         } catch (handlerError) {
-            console.error('Critical error in error handler:', handlerError);
-            
-            // Fallback error response
-            try {
-                const fallbackMessage = "❌ An unexpected error occurred. Please try again later.";
-                
-                if (!interaction.replied && !interaction.deferred) {
-                    await interaction.reply({ content: fallbackMessage, ephemeral: true });
-                } else if (interaction.deferred) {
-                    await interaction.editReply({ content: fallbackMessage });
-                } else {
-                    await interaction.followUp({ content: fallbackMessage, ephemeral: true });
-                }
-            } catch (fallbackError) {
-                console.error('Failed to send fallback error message:', fallbackError);
-            }
+            console.error('Error in error handler:', handlerError);
+            await this.fallbackErrorReply(interaction);
         }
     }
 
     /**
-     * Parse error to extract useful information
-     * @param {Error} error - The error to parse
-     * @returns {Object} - Parsed error information
+     * Handle general interaction errors
+     * @param {Interaction} interaction - Discord interaction
+     * @param {Error} error - The error that occurred
      */
-    parseError(error) {
-        const errorInfo = {
-            message: 'An unknown error occurred',
-            type: 'UNKNOWN',
-            code: null,
-            retryable: false
-        };
+    async handleInteractionError(interaction, error) {
+        try {
+            console.error('Interaction Error:', error);
 
-        if (!error) return errorInfo;
-
-        // Discord API errors
-        if (error.code) {
-            errorInfo.code = error.code;
-            errorInfo.type = 'DISCORD_API';
-            
-            switch (error.code) {
-                case 50013:
-                    errorInfo.message = 'Missing permissions to perform this action';
-                    break;
-                case 50001:
-                    errorInfo.message = 'Missing access to perform this action';
-                    break;
-                case 50007:
-                    errorInfo.message = 'Cannot send direct messages to this user';
-                    break;
-                case 50035:
-                    errorInfo.message = 'Invalid form body or invalid input provided';
-                    break;
-                case 10003:
-                case 10004:
-                case 10013:
-                case 10062:
-                    errorInfo.message = 'Required resource not found';
-                    break;
-                case 20022:
-                    errorInfo.message = 'This interaction has already been acknowledged';
-                    break;
-                case 40060:
-                    errorInfo.message = 'Interaction has already been acknowledged';
-                    break;
-                default:
-                    errorInfo.message = error.message || `Discord API Error (${error.code})`;
-            }
-        }
-        // Custom application errors
-        else if (error.type) {
-            errorInfo.type = error.type;
-            errorInfo.retryable = error.retryable || false;
-            
-            switch (error.type) {
-                case 'DATABASE_ERROR':
-                    errorInfo.message = 'Database temporarily unavailable';
-                    errorInfo.retryable = true;
-                    break;
-                case 'VALIDATION_ERROR':
-                    errorInfo.message = error.message || 'Invalid input provided';
-                    break;
-                case 'COOLDOWN_ACTIVE':
-                    errorInfo.message = `Command is on cooldown. Please wait ${error.timeLeft}s`;
-                    break;
-                case 'INSUFFICIENT_PERMISSIONS':
-                    errorInfo.message = 'You do not have permission to use this command';
-                    break;
-                case 'RATE_LIMITED':
-                    errorInfo.message = 'Rate limited. Please slow down';
-                    errorInfo.retryable = true;
-                    break;
-                default:
-                    errorInfo.message = error.message || 'An application error occurred';
-            }
-        }
-        // Network/timeout errors
-        else if (error.name === 'TimeoutError' || error.code === 'ETIMEDOUT') {
-            errorInfo.type = 'TIMEOUT';
-            errorInfo.message = 'Request timed out. Please try again';
-            errorInfo.retryable = true;
-        }
-        // JavaScript errors
-        else {
-            errorInfo.type = error.name || 'JAVASCRIPT_ERROR';
-            errorInfo.message = error.message || 'An unexpected error occurred';
-            
-            if (error.name === 'TypeError' || error.name === 'ReferenceError') {
-                errorInfo.retryable = false;
-            }
-        }
-
-        return errorInfo;
-    }
-
-    /**
-     * Create error response (embed or text)
-     * @param {string} message - Error message
-     * @param {string} commandName - Command name
-     * @param {Object} errorInfo - Parsed error info
-     * @param {Object} options - Response options
-     * @returns {Object} - Response object
-     */
-    async createErrorResponse(message, commandName, errorInfo, options = {}) {
-        if (this.options.useEmbeds && !options.noEmbed) {
-            const embed = new EmbedBuilder()
+            const errorEmbed = new EmbedBuilder()
                 .setColor('#FF0000')
-                .setTitle('❌ Command Error')
-                .setDescription(message)
-                .addFields(
-                    { name: 'Command', value: `\`${commandName}\``, inline: true },
-                    { name: 'Error Type', value: errorInfo.type, inline: true }
-                )
+                .setTitle('⚠️ Interaction Error')
+                .setDescription('An unexpected error occurred while processing your interaction.')
+                .addFields([
+                    { name: 'Error Type', value: error.name || 'Unknown', inline: true },
+                    { name: 'Time', value: new Date().toISOString(), inline: true }
+                ])
+                .setFooter({ text: 'Please try again later or contact support if this persists.' })
                 .setTimestamp();
 
-            if (this.options.includeErrorCode && errorInfo.code) {
-                embed.addFields({ name: 'Error Code', value: `${errorInfo.code}`, inline: true });
-            }
+            await this.safeErrorReply(interaction, errorEmbed);
 
-            if (errorInfo.retryable) {
-                embed.setFooter({ text: 'This error may be temporary. Please try again.' });
-            } else {
-                embed.setFooter({ text: 'If this persists, please contact support.' });
-            }
-
-            return { embeds: [embed], ephemeral: this.options.ephemeralErrors };
-        } else {
-            const prefix = errorInfo.retryable ? '⏳' : '❌';
-            const suffix = errorInfo.retryable 
-                ? ' (Temporary error - please retry)' 
-                : ' (If this persists, contact support)';
-            
-            return { 
-                content: `${prefix} ${message}${suffix}`, 
-                ephemeral: this.options.ephemeralErrors 
-            };
+        } catch (handlerError) {
+            console.error('Error in interaction error handler:', handlerError);
+            await this.fallbackErrorReply(interaction);
         }
     }
 
     /**
-     * Send error response to user
-     * @param {Interaction} interaction - Discord interaction
-     * @param {Object} response - Response object
+     * Handle button interaction errors
+     * @param {ButtonInteraction} interaction - Button interaction
+     * @param {Error} error - The error that occurred
+     * @param {string} customId - Button custom ID
      */
-    async sendErrorResponse(interaction, response) {
-        if (!interaction || !interaction.isRepliable()) {
-            console.warn('Cannot send error response: Invalid interaction');
-            return;
-        }
+    async handleButtonError(interaction, error, customId) {
+        try {
+            console.error(`Button Error (${customId}):`, error);
 
+            const errorEmbed = new EmbedBuilder()
+                .setColor('#FF0000')
+                .setTitle('🔴 Button Error')
+                .setDescription('Something went wrong with that button interaction.')
+                .addFields([
+                    { name: 'Button ID', value: customId || 'Unknown', inline: true },
+                    { name: 'Error', value: error.message.slice(0, 100) + '...', inline: true }
+                ])
+                .setFooter({ text: 'Try refreshing the command or contact support.' })
+                .setTimestamp();
+
+            await this.safeErrorReply(interaction, errorEmbed);
+
+        } catch (handlerError) {
+            console.error('Error in button error handler:', handlerError);
+            await this.fallbackErrorReply(interaction);
+        }
+    }
+
+    /**
+     * Categorize error types for better handling
+     * @param {Error} error - The error to categorize
+     * @returns {string} - Error category
+     */
+    categorizeError(error) {
+        const message = error.message.toLowerCase();
+        const stack = error.stack?.toLowerCase() || '';
+
+        if (message.includes('missing permissions') || message.includes('forbidden')) {
+            return 'permissions';
+        }
+        
+        if (message.includes('timeout') || message.includes('time out')) {
+            return 'timeout';
+        }
+        
+        if (message.includes('rate limit') || message.includes('too many requests')) {
+            return 'ratelimit';
+        }
+        
+        if (message.includes('database') || message.includes('sqlite')) {
+            return 'database';
+        }
+        
+        if (message.includes('network') || message.includes('fetch')) {
+            return 'network';
+        }
+        
+        if (message.includes('validation') || message.includes('invalid')) {
+            return 'validation';
+        }
+        
+        if (stack.includes('discord.js')) {
+            return 'discord';
+        }
+        
+        return 'generic';
+    }
+
+    /**
+     * Create appropriate error embed based on error type
+     * @param {string} errorType - Type of error
+     * @param {string} commandName - Command name
+     * @param {Error} error - Original error
+     * @returns {EmbedBuilder} - Error embed
+     */
+    createErrorEmbed(errorType, commandName, error) {
+        const embed = new EmbedBuilder()
+            .setTimestamp()
+            .setFooter({ text: `Error ID: ${Date.now()}` });
+
+        switch (errorType) {
+            case 'permissions':
+                return embed
+                    .setColor('#FFA500')
+                    .setTitle('🔒 Permission Error')
+                    .setDescription(`I don't have the required permissions to execute \`${commandName}\`.`)
+                    .addFields([
+                        { name: 'Solution', value: 'Please check my server permissions or contact an administrator.', inline: false }
+                    ]);
+
+            case 'timeout':
+                return embed
+                    .setColor('#FFFF00')
+                    .setTitle('⏰ Timeout Error')
+                    .setDescription(`The \`${commandName}\` command took too long to respond.`)
+                    .addFields([
+                        { name: 'Solution', value: 'Please try again in a moment.', inline: false }
+                    ]);
+
+            case 'ratelimit':
+                return embed
+                    .setColor('#FF6600')
+                    .setTitle('🚦 Rate Limit')
+                    .setDescription('You\'re using commands too quickly!')
+                    .addFields([
+                        { name: 'Solution', value: 'Please wait a moment before trying again.', inline: false }
+                    ]);
+
+            case 'database':
+                return embed
+                    .setColor('#FF0000')
+                    .setTitle('💾 Database Error')
+                    .setDescription(`There was an issue accessing the database for \`${commandName}\`.`)
+                    .addFields([
+                        { name: 'Solution', value: 'This is usually temporary. Please try again in a moment.', inline: false }
+                    ]);
+
+            case 'network':
+                return embed
+                    .setColor('#FF4500')
+                    .setTitle('🌐 Network Error')
+                    .setDescription('There was a network connectivity issue.')
+                    .addFields([
+                        { name: 'Solution', value: 'Please check your connection and try again.', inline: false }
+                    ]);
+
+            case 'validation':
+                return embed
+                    .setColor('#FF1493')
+                    .setTitle('📝 Validation Error')
+                    .setDescription(`Invalid input provided for \`${commandName}\`.`)
+                    .addFields([
+                        { name: 'Solution', value: 'Please check your command syntax and try again.', inline: false }
+                    ]);
+
+            case 'discord':
+                return embed
+                    .setColor('#5865F2')
+                    .setTitle('📡 Discord API Error')
+                    .setDescription('There was an issue communicating with Discord.')
+                    .addFields([
+                        { name: 'Solution', value: 'This is usually temporary. Please try again shortly.', inline: false }
+                    ]);
+
+            default:
+                return embed
+                    .setColor('#FF0000')
+                    .setTitle('❌ Command Error')
+                    .setDescription(`An error occurred while executing \`${commandName}\`.`)
+                    .addFields([
+                        { name: 'Error', value: error.message.slice(0, 200) + (error.message.length > 200 ? '...' : ''), inline: false },
+                        { name: 'Solution', value: 'Please try again later or contact support if this persists.', inline: false }
+                    ]);
+        }
+    }
+
+    /**
+     * Safely send error reply with fallbacks
+     * @param {Interaction} interaction - Discord interaction
+     * @param {EmbedBuilder} embed - Error embed
+     */
+    async safeErrorReply(interaction, embed) {
         try {
             if (!interaction.replied && !interaction.deferred) {
-                await interaction.reply(response);
+                await interaction.reply({ embeds: [embed], ephemeral: true });
             } else if (interaction.deferred && !interaction.replied) {
-                await interaction.editReply(response);
+                await interaction.editReply({ embeds: [embed] });
             } else {
-                // Try followUp if already replied
-                response.ephemeral = true; // Force ephemeral for followups
-                await interaction.followUp(response);
+                await interaction.followUp({ embeds: [embed], ephemeral: true });
             }
-        } catch (sendError) {
-            console.error('Failed to send error response:', sendError);
+        } catch (replyError) {
+            console.error('Failed to send error reply:', replyError);
+            await this.fallbackErrorReply(interaction);
+        }
+    }
+
+    /**
+     * Fallback error reply for when embed fails
+     * @param {Interaction} interaction - Discord interaction
+     */
+    async fallbackErrorReply(interaction) {
+        try {
+            const message = '❌ An error occurred. Please try again later.';
             
-            // Last resort - try basic text response
-            try {
-                const basicResponse = { content: '❌ An error occurred', ephemeral: true };
-                if (!interaction.replied) {
-                    await interaction.reply(basicResponse);
-                }
-            } catch (finalError) {
-                console.error('All error response methods failed:', finalError);
-            }
-        }
-    }
-
-    /**
-     * Enhanced permission validation
-     * @param {Interaction} interaction - The Discord interaction
-     * @param {string[]|Object} requiredPermissions - Required permissions (array or object with user/bot keys)
-     * @param {Object} options - Validation options
-     * @returns {Object} - Validation result
-     */
-    validatePermissions(interaction, requiredPermissions = [], options = {}) {
-        const result = {
-            valid: true,
-            missing: {
-                user: [],
-                bot: []
-            },
-            errors: []
-        };
-
-        if (!interaction.member && requiredPermissions.length > 0) {
-            result.valid = false;
-            result.errors.push('This command can only be used in a server');
-            return result;
-        }
-
-        // Handle different permission formats
-        let userPerms = [];
-        let botPerms = [];
-
-        if (Array.isArray(requiredPermissions)) {
-            userPerms = requiredPermissions;
-        } else if (typeof requiredPermissions === 'object') {
-            userPerms = requiredPermissions.user || [];
-            botPerms = requiredPermissions.bot || [];
-        }
-
-        // Check user permissions
-        if (userPerms.length > 0 && interaction.member) {
-            for (const permission of userPerms) {
-                const permFlag = typeof permission === 'string' 
-                    ? PermissionsBitField.Flags[permission]
-                    : permission;
-                    
-                if (!interaction.member.permissions.has(permFlag)) {
-                    result.missing.user.push(permission);
-                }
-            }
-        }
-
-        // Check bot permissions
-        if (botPerms.length > 0 && interaction.guild) {
-            const botMember = interaction.guild.members.cache.get(interaction.client.user.id);
-            if (botMember) {
-                const permissions = interaction.channel 
-                    ? interaction.channel.permissionsFor(botMember)
-                    : botMember.permissions;
-
-                for (const permission of botPerms) {
-                    const permFlag = typeof permission === 'string' 
-                        ? PermissionsBitField.Flags[permission]
-                        : permission;
-                        
-                    if (!permissions.has(permFlag)) {
-                        result.missing.bot.push(permission);
-                    }
-                }
-            }
-        }
-
-        // Determine if validation failed
-        if (result.missing.user.length > 0) {
-            result.valid = false;
-            result.errors.push(`You are missing permissions: ${result.missing.user.join(', ')}`);
-        }
-
-        if (result.missing.bot.length > 0) {
-            result.valid = false;
-            result.errors.push(`Bot is missing permissions: ${result.missing.bot.join(', ')}`);
-        }
-
-        return result;
-    }
-
-    /**
-     * Enhanced cooldown checking with database fallback
-     * @param {string} commandName - The name of the command
-     * @param {string} userId - The user's ID
-     * @param {number} cooldownSeconds - Cooldown duration in seconds
-     * @param {Object} options - Additional options
-     * @returns {Object} - Cooldown information
-     */
-    async checkCooldown(commandName, userId, cooldownSeconds = null, options = {}) {
-        const cooldown = cooldownSeconds || this.options.defaultCooldown;
-        const key = `cooldown_${commandName}_${userId}`;
-        const guildKey = options.guildId ? `${key}_${options.guildId}` : key;
-
-        try {
-            let cooldownEnd = null;
-
-            // Try database first if available
-            if (this.options.useDatabase && this.options.database) {
-                try {
-                    cooldownEnd = await this.options.database.get(guildKey);
-                } catch (dbError) {
-                    console.warn('Database cooldown check failed, using memory fallback:', dbError);
-                }
-            }
-
-            // Fallback to memory storage
-            if (cooldownEnd === null) {
-                cooldownEnd = this.cooldowns.get(guildKey);
-            }
-
-            if (!cooldownEnd) {
-                return { active: false, remaining: 0 };
-            }
-
-            const now = Date.now();
-            const timeLeft = Math.ceil((cooldownEnd - now) / 1000);
-
-            if (timeLeft > 0) {
-                return {
-                    active: true,
-                    remaining: timeLeft,
-                    formatted: this.formatCooldownTime(timeLeft)
-                };
+            if (!interaction.replied && !interaction.deferred) {
+                await interaction.reply({ content: message, ephemeral: true });
+            } else if (interaction.deferred && !interaction.replied) {
+                await interaction.editReply({ content: message });
             } else {
-                // Clean up expired cooldown
-                await this.clearCooldown(commandName, userId, options);
-                return { active: false, remaining: 0 };
+                await interaction.followUp({ content: message, ephemeral: true });
             }
-
-        } catch (error) {
-            console.error('Cooldown check error:', error);
-            // Return no cooldown on error to avoid blocking users
-            return { active: false, remaining: 0 };
+        } catch (fallbackError) {
+            console.error('Even fallback error reply failed:', fallbackError);
         }
     }
 
     /**
-     * Set command cooldown with database support
-     * @param {string} commandName - The name of the command
-     * @param {string} userId - The user's ID
-     * @param {number} cooldownSeconds - Cooldown duration in seconds
-     * @param {Object} options - Additional options
+     * Check if user is rate limited for error messages
+     * @param {string} key - Rate limit key
+     * @returns {boolean} - Whether user is rate limited
      */
-    async setCooldown(commandName, userId, cooldownSeconds = null, options = {}) {
-        const cooldown = cooldownSeconds || this.options.defaultCooldown;
-        const key = `cooldown_${commandName}_${userId}`;
-        const guildKey = options.guildId ? `${key}_${options.guildId}` : key;
-        const expireTime = Date.now() + (cooldown * 1000);
-
-        try {
-            // Try database first if available
-            if (this.options.useDatabase && this.options.database) {
-                try {
-                    await this.options.database.set(guildKey, expireTime);
-                } catch (dbError) {
-                    console.warn('Database cooldown set failed, using memory fallback:', dbError);
-                }
-            }
-
-            // Always store in memory as backup/fallback
-            this.cooldowns.set(guildKey, expireTime);
-
-            // Prevent memory leaks
-            if (this.cooldowns.size > this.options.maxCooldownsInMemory) {
-                this.cleanupExpiredCooldowns();
-            }
-
-        } catch (error) {
-            console.error('Error setting cooldown:', error);
-        }
-    }
-
-    /**
-     * Clear specific cooldown
-     * @param {string} commandName - Command name
-     * @param {string} userId - User ID
-     * @param {Object} options - Additional options
-     */
-    async clearCooldown(commandName, userId, options = {}) {
-        const key = `cooldown_${commandName}_${userId}`;
-        const guildKey = options.guildId ? `${key}_${options.guildId}` : key;
-
-        try {
-            if (this.options.useDatabase && this.options.database) {
-                await this.options.database.delete(guildKey);
-            }
-            this.cooldowns.delete(guildKey);
-        } catch (error) {
-            console.error('Error clearing cooldown:', error);
-        }
-    }
-
-    /**
-     * Format cooldown time for display
-     * @param {number} seconds - Seconds remaining
-     * @returns {string} - Formatted time
-     */
-    formatCooldownTime(seconds) {
-        if (seconds < 60) {
-            return `${seconds}s`;
+    isRateLimited(key) {
+        const now = Date.now();
+        const limit = this.rateLimitMap.get(key);
+        
+        if (!limit) return false;
+        
+        if (now - limit < 5000) { // 5 second rate limit
+            return true;
         }
         
-        const minutes = Math.floor(seconds / 60);
-        const remainingSeconds = seconds % 60;
-        
-        if (minutes < 60) {
-            return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
-        }
-        
-        const hours = Math.floor(minutes / 60);
-        const remainingMinutes = minutes % 60;
-        
-        return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
-    }
-
-    /**
-     * Check if error is retryable
-     * @param {Error} error - The error to check
-     * @returns {boolean} - Whether error is retryable
-     */
-    isRetryableError(error) {
-        if (!error) return false;
-
-        // Discord rate limits
-        if (error.code === 429) return true;
-        
-        // Timeout errors
-        if (error.name === 'TimeoutError' || error.code === 'ETIMEDOUT') return true;
-        
-        // Custom retryable errors
-        if (error.retryable === true) return true;
-        
-        // Database connection errors
-        if (error.type === 'DATABASE_ERROR') return true;
-        
+        this.rateLimitMap.delete(key);
         return false;
     }
 
     /**
-     * Handle retry logic
-     * @param {Interaction} interaction - Discord interaction
-     * @param {Error} error - Original error
+     * Set rate limit for error messages
+     * @param {string} key - Rate limit key
+     */
+    setRateLimit(key) {
+        this.rateLimitMap.set(key, Date.now());
+        
+        // Clean up old entries
+        setTimeout(() => {
+            this.rateLimitMap.delete(key);
+        }, 10000);
+    }
+
+    /**
+     * Track error frequency for monitoring
      * @param {string} commandName - Command name
-     * @returns {Object} - Retry result
+     * @param {string} errorType - Error type
      */
-    async handleRetry(interaction, error, commandName) {
-        const retryKey = `${interaction.id}_${commandName}`;
-        const currentRetries = this.retryQueue.get(retryKey) || 0;
-
-        if (currentRetries >= this.options.maxRetries) {
-            this.retryQueue.delete(retryKey);
-            return { success: false, reason: 'Max retries exceeded' };
-        }
-
-        // Increment retry count
-        this.retryQueue.set(retryKey, currentRetries + 1);
-
-        // Wait before retry
-        await new Promise(resolve => setTimeout(resolve, this.options.retryDelay * (currentRetries + 1)));
-
-        try {
-            // Attempt to re-execute the original command
-            // This would need to be implemented based on your command structure
-            return { success: true };
-        } catch (retryError) {
-            return { success: false, error: retryError };
-        }
-    }
-
-    /**
-     * Log errors with different levels
-     * @param {Error} error - The error to log
-     * @param {string} context - Error context
-     * @param {Interaction} interaction - Discord interaction
-     */
-    logError(error, context, interaction = null) {
-        const logEntry = {
-            timestamp: new Date().toISOString(),
-            error: {
-                name: error?.name || 'Unknown',
-                message: error?.message || 'No message',
-                stack: error?.stack || 'No stack trace',
-                code: error?.code || null,
-                type: error?.type || null
-            },
-            context,
-            user: interaction?.user ? {
-                id: interaction.user.id,
-                tag: interaction.user.tag
-            } : null,
-            guild: interaction?.guild ? {
-                id: interaction.guild.id,
-                name: interaction.guild.name
-            } : null
-        };
-
-        // Store in memory log
-        this.errorLog.push(logEntry);
-        if (this.errorLog.length > this.maxLogEntries) {
-            this.errorLog.shift(); // Remove oldest entry
-        }
-
-        // Console logging
-        if (this.options.logToConsole) {
-            console.error(`[${logEntry.timestamp}] Error in ${context}:`, logEntry.error);
-        }
-
-        // File logging (if enabled)
-        if (this.options.logToFile && this.options.logFile) {
-            // Implementation would depend on your logging library
-            // Example: fs.appendFileSync(this.options.logFile, JSON.stringify(logEntry) + '\n');
-        }
-    }
-
-    /**
-     * Clean up expired cooldowns from memory
-     */
-    cleanupExpiredCooldowns() {
-        const now = Date.now();
-        let cleaned = 0;
-
-        this.cooldowns.forEach((expireTime, key) => {
-            if (now >= expireTime) {
-                this.cooldowns.delete(key);
-                cleaned++;
-            }
-        });
-
-        if (cleaned > 0) {
-            console.log(`[ErrorHandler] Cleaned up ${cleaned} expired cooldowns`);
-        }
-    }
-
-    /**
-     * Start auto cleanup timer
-     */
-    startAutoCleanup() {
-        // Clean up expired cooldowns every 5 minutes
-        this.cleanupTimer = setInterval(() => {
-            this.cleanupExpiredCooldowns();
-        }, 5 * 60 * 1000);
-
-        // Don't keep process alive
-        if (this.cleanupTimer.unref) {
-            this.cleanupTimer.unref();
+    trackError(commandName, errorType) {
+        const key = `${commandName}_${errorType}`;
+        const count = this.errorCounts.get(key) || 0;
+        this.errorCounts.set(key, count + 1);
+        
+        // Log if error frequency is high
+        if (count > 5) {
+            console.warn(`High error frequency detected: ${key} (${count + 1} times)`);
         }
     }
 
@@ -621,38 +320,38 @@ class EnhancedErrorHandler {
      * Get error statistics
      * @returns {Object} - Error statistics
      */
-    getStats() {
-        return {
-            errorLogEntries: this.errorLog.length,
-            activeCooldowns: this.cooldowns.size,
-            activeRetries: this.retryQueue.size,
-            options: this.options
-        };
+    getErrorStats() {
+        const stats = {};
+        for (const [key, count] of this.errorCounts.entries()) {
+            stats[key] = count;
+        }
+        return stats;
     }
 
     /**
-     * Clear all data
+     * Reset error tracking
      */
-    destroy() {
-        if (this.cleanupTimer) {
-            clearInterval(this.cleanupTimer);
-        }
-        this.cooldowns.clear();
-        this.errorLog.length = 0;
-        this.retryQueue.clear();
+    resetErrorStats() {
+        this.errorCounts.clear();
+        this.rateLimitMap.clear();
     }
 }
 
 // Create singleton instance
-const errorHandler = new EnhancedErrorHandler();
+const errorHandler = new CommandErrorHandler();
 
-// Export both class and instance
 module.exports = {
-    EnhancedErrorHandler,
-    errorHandler,
-    // For backward compatibility
+    CommandErrorHandler,
     handleCommandError: errorHandler.handleCommandError.bind(errorHandler),
-    validatePermissions: errorHandler.validatePermissions.bind(errorHandler),
-    checkCooldown: errorHandler.checkCooldown.bind(errorHandler),
-    setCooldown: errorHandler.setCooldown.bind(errorHandler)
+    handleInteractionError: errorHandler.handleInteractionError.bind(errorHandler),
+    handleButtonError: errorHandler.handleButtonError.bind(errorHandler),
+    
+    // Legacy exports for backward compatibility
+    async handleCommandError(interaction, error, commandName) {
+        return await errorHandler.handleCommandError(interaction, error, commandName);
+    },
+    
+    async handleInteractionError(interaction, error) {
+        return await errorHandler.handleInteractionError(interaction, error);
+    }
 };

@@ -1,472 +1,415 @@
+
 const { Collection } = require('discord.js');
 
 class CooldownManager {
-    constructor(options = {}) {
+    constructor() {
         this.cooldowns = new Collection();
         this.globalCooldowns = new Collection();
-        this.options = {
-            // Auto cleanup expired cooldowns every 5 minutes
-            autoCleanup: options.autoCleanup !== false,
-            cleanupInterval: options.cleanupInterval || 5 * 60 * 1000,
-            // Maximum cooldowns per command to prevent memory issues
-            maxCooldownsPerCommand: options.maxCooldownsPerCommand || 10000,
-            // Default cooldown in seconds
-            defaultCooldown: options.defaultCooldown || 3,
-            ...options
-        };
-
-        // Start auto cleanup if enabled
-        if (this.options.autoCleanup) {
-            this.startAutoCleanup();
-        }
+        this.userCooldowns = new Collection();
+        
+        // Cleanup interval
+        this.cleanupInterval = setInterval(() => {
+            this.cleanup();
+        }, 60000); // Clean every minute
     }
 
     /**
-     * Check if a command is on cooldown
-     * @param {string} commandName - The name of the command
-     * @param {string} userId - The user's ID
-     * @param {string} guildId - The guild's ID (optional, for server-specific cooldowns)
-     * @returns {number|null} - Milliseconds remaining in cooldown, or null if no cooldown
+     * Check if a user is on cooldown for a specific command
+     * @param {string} commandName - Name of the command
+     * @param {string} userId - User ID
+     * @param {number} cooldownTime - Cooldown time in seconds
+     * @returns {Object} - Cooldown information
      */
-    checkCooldown(commandName, userId, guildId = null) {
+    checkCooldown(commandName, userId, cooldownTime = 3) {
         if (!commandName || !userId) {
-            throw new Error('Command name and user ID are required');
+            return { onCooldown: false, timeLeft: 0 };
         }
 
-        const key = this.generateKey(commandName, guildId);
-        
-        if (!this.cooldowns.has(key)) {
-            return null;
-        }
-
-        const timestamps = this.cooldowns.get(key);
-        const cooldownEnd = timestamps.get(userId);
-        
-        if (!cooldownEnd) return null;
-
+        const key = `${commandName}_${userId}`;
         const now = Date.now();
-        if (now < cooldownEnd) {
-            return cooldownEnd - now;
+        const cooldownMillis = cooldownTime * 1000;
+
+        if (!this.cooldowns.has(commandName)) {
+            this.cooldowns.set(commandName, new Collection());
         }
 
-        // Cooldown expired, clean it up
-        timestamps.delete(userId);
-        return null;
-    }
-
-    /**
-     * Check if a command is on cooldown (returns seconds for backward compatibility)
-     * @param {string} commandName - The name of the command
-     * @param {string} userId - The user's ID
-     * @param {string} guildId - The guild's ID (optional)
-     * @returns {number|null} - Seconds remaining in cooldown, or null if no cooldown
-     */
-    checkCooldownSeconds(commandName, userId, guildId = null) {
-        const cooldownMs = this.checkCooldown(commandName, userId, guildId);
-        return cooldownMs ? Math.ceil(cooldownMs / 1000) : null;
-    }
-
-    /**
-     * Set a cooldown for a command
-     * @param {string} commandName - The name of the command
-     * @param {string} userId - The user's ID
-     * @param {number} cooldownSeconds - Cooldown duration in seconds
-     * @param {string} guildId - The guild's ID (optional, for server-specific cooldowns)
-     */
-    setCooldown(commandName, userId, cooldownSeconds = null, guildId = null) {
-        if (!commandName || !userId) {
-            throw new Error('Command name and user ID are required');
-        }
-
-        const cooldown = cooldownSeconds || this.options.defaultCooldown;
-        if (cooldown <= 0) {
-            throw new Error('Cooldown must be a positive number');
-        }
-
-        const key = this.generateKey(commandName, guildId);
+        const timestamps = this.cooldowns.get(commandName);
         
-        if (!this.cooldowns.has(key)) {
-            this.cooldowns.set(key, new Collection());
-        }
-
-        const timestamps = this.cooldowns.get(key);
-        
-        // Prevent memory issues by limiting cooldowns per command
-        if (timestamps.size >= this.options.maxCooldownsPerCommand) {
-            this.cleanupExpiredCooldowns(key);
+        if (timestamps.has(userId)) {
+            const expirationTime = timestamps.get(userId) + cooldownMillis;
             
-            // If still at limit after cleanup, remove oldest entries
-            if (timestamps.size >= this.options.maxCooldownsPerCommand) {
-                const oldestEntries = Array.from(timestamps.entries())
-                    .sort((a, b) => a[1] - b[1])
-                    .slice(0, Math.floor(this.options.maxCooldownsPerCommand * 0.1));
-                
-                oldestEntries.forEach(([id]) => timestamps.delete(id));
+            if (now < expirationTime) {
+                const timeLeft = Math.ceil((expirationTime - now) / 1000);
+                return { 
+                    onCooldown: true, 
+                    timeLeft,
+                    expiresAt: expirationTime,
+                    commandName,
+                    userId
+                };
             }
         }
 
-        timestamps.set(userId, Date.now() + (cooldown * 1000));
+        return { onCooldown: false, timeLeft: 0 };
     }
 
     /**
-     * Set a global cooldown (affects all commands)
-     * @param {string} userId - The user's ID
-     * @param {number} cooldownSeconds - Cooldown duration in seconds
+     * Set cooldown for a user and command
+     * @param {string} commandName - Name of the command
+     * @param {string} userId - User ID
+     * @param {number} cooldownTime - Cooldown time in seconds
+     * @returns {boolean} - Success status
      */
-    setGlobalCooldown(userId, cooldownSeconds) {
-        if (!userId || cooldownSeconds <= 0) {
-            throw new Error('Valid user ID and positive cooldown required');
-        }
+    setCooldown(commandName, userId, cooldownTime = 3) {
+        try {
+            if (!commandName || !userId) {
+                return false;
+            }
 
-        this.globalCooldowns.set(userId, Date.now() + (cooldownSeconds * 1000));
-    }
+            if (!this.cooldowns.has(commandName)) {
+                this.cooldowns.set(commandName, new Collection());
+            }
 
-    /**
-     * Check if a user has a global cooldown
-     * @param {string} userId - The user's ID
-     * @returns {number|null} - Milliseconds remaining, or null if no cooldown
-     */
-    checkGlobalCooldown(userId) {
-        if (!userId) return null;
+            const timestamps = this.cooldowns.get(commandName);
+            const now = Date.now();
+            
+            timestamps.set(userId, now);
 
-        const cooldownEnd = this.globalCooldowns.get(userId);
-        if (!cooldownEnd) return null;
+            // Auto-cleanup after cooldown expires
+            setTimeout(() => {
+                if (timestamps.has(userId)) {
+                    timestamps.delete(userId);
+                }
+            }, cooldownTime * 1000 + 1000); // Add 1 second buffer
 
-        const now = Date.now();
-        if (now < cooldownEnd) {
-            return cooldownEnd - now;
-        }
-
-        this.globalCooldowns.delete(userId);
-        return null;
-    }
-
-    /**
-     * Clear a user's cooldown for a command
-     * @param {string} commandName - The name of the command
-     * @param {string} userId - The user's ID
-     * @param {string} guildId - The guild's ID (optional)
-     */
-    clearCooldown(commandName, userId, guildId = null) {
-        if (!commandName || !userId) return false;
-
-        const key = this.generateKey(commandName, guildId);
-        const timestamps = this.cooldowns.get(key);
-        
-        if (timestamps && timestamps.has(userId)) {
-            timestamps.delete(userId);
             return true;
+        } catch (error) {
+            console.error('Error setting cooldown:', error);
+            return false;
         }
-        
-        return false;
     }
 
     /**
-     * Clear all cooldowns for a command
-     * @param {string} commandName - The name of the command
-     * @param {string} guildId - The guild's ID (optional)
+     * Check global cooldown (affects all users)
+     * @param {string} key - Global cooldown key
+     * @param {number} cooldownTime - Cooldown time in seconds
+     * @returns {Object} - Cooldown information
      */
-    clearCommandCooldowns(commandName, guildId = null) {
-        if (!commandName) return false;
+    checkGlobalCooldown(key, cooldownTime = 10) {
+        const now = Date.now();
+        const cooldownMillis = cooldownTime * 1000;
+        
+        if (this.globalCooldowns.has(key)) {
+            const lastUsed = this.globalCooldowns.get(key);
+            const expirationTime = lastUsed + cooldownMillis;
+            
+            if (now < expirationTime) {
+                const timeLeft = Math.ceil((expirationTime - now) / 1000);
+                return { 
+                    onCooldown: true, 
+                    timeLeft,
+                    expiresAt: expirationTime,
+                    key
+                };
+            }
+        }
+        
+        return { onCooldown: false, timeLeft: 0 };
+    }
 
-        const key = this.generateKey(commandName, guildId);
-        return this.cooldowns.delete(key);
+    /**
+     * Set global cooldown
+     * @param {string} key - Global cooldown key
+     * @param {number} cooldownTime - Cooldown time in seconds
+     * @returns {boolean} - Success status
+     */
+    setGlobalCooldown(key, cooldownTime = 10) {
+        try {
+            const now = Date.now();
+            this.globalCooldowns.set(key, now);
+            
+            // Auto-cleanup
+            setTimeout(() => {
+                this.globalCooldowns.delete(key);
+            }, cooldownTime * 1000 + 1000);
+            
+            return true;
+        } catch (error) {
+            console.error('Error setting global cooldown:', error);
+            return false;
+        }
+    }
+
+    /**
+     * Check user-wide cooldown (across all commands)
+     * @param {string} userId - User ID
+     * @param {number} cooldownTime - Cooldown time in seconds
+     * @returns {Object} - Cooldown information
+     */
+    checkUserCooldown(userId, cooldownTime = 1) {
+        const now = Date.now();
+        const cooldownMillis = cooldownTime * 1000;
+        
+        if (this.userCooldowns.has(userId)) {
+            const lastUsed = this.userCooldowns.get(userId);
+            const expirationTime = lastUsed + cooldownMillis;
+            
+            if (now < expirationTime) {
+                const timeLeft = Math.ceil((expirationTime - now) / 1000);
+                return { 
+                    onCooldown: true, 
+                    timeLeft,
+                    expiresAt: expirationTime,
+                    userId
+                };
+            }
+        }
+        
+        return { onCooldown: false, timeLeft: 0 };
+    }
+
+    /**
+     * Set user-wide cooldown
+     * @param {string} userId - User ID
+     * @param {number} cooldownTime - Cooldown time in seconds
+     * @returns {boolean} - Success status
+     */
+    setUserCooldown(userId, cooldownTime = 1) {
+        try {
+            const now = Date.now();
+            this.userCooldowns.set(userId, now);
+            
+            // Auto-cleanup
+            setTimeout(() => {
+                this.userCooldowns.delete(userId);
+            }, cooldownTime * 1000 + 1000);
+            
+            return true;
+        } catch (error) {
+            console.error('Error setting user cooldown:', error);
+            return false;
+        }
+    }
+
+    /**
+     * Remove cooldown for a user and command
+     * @param {string} commandName - Name of the command
+     * @param {string} userId - User ID
+     * @returns {boolean} - Success status
+     */
+    removeCooldown(commandName, userId) {
+        try {
+            if (this.cooldowns.has(commandName)) {
+                const timestamps = this.cooldowns.get(commandName);
+                return timestamps.delete(userId);
+            }
+            return false;
+        } catch (error) {
+            console.error('Error removing cooldown:', error);
+            return false;
+        }
     }
 
     /**
      * Clear all cooldowns for a user
-     * @param {string} userId - The user's ID
+     * @param {string} userId - User ID
+     * @returns {boolean} - Success status
      */
     clearUserCooldowns(userId) {
-        if (!userId) return 0;
-
-        let clearedCount = 0;
-        
-        // Clear regular cooldowns
-        this.cooldowns.forEach(timestamps => {
-            if (timestamps.has(userId)) {
-                timestamps.delete(userId);
-                clearedCount++;
+        try {
+            let cleared = 0;
+            
+            for (const [commandName, timestamps] of this.cooldowns.entries()) {
+                if (timestamps.has(userId)) {
+                    timestamps.delete(userId);
+                    cleared++;
+                }
             }
-        });
-
-        // Clear global cooldown
-        if (this.globalCooldowns.has(userId)) {
-            this.globalCooldowns.delete(userId);
-            clearedCount++;
+            
+            // Also clear user-wide cooldown
+            if (this.userCooldowns.has(userId)) {
+                this.userCooldowns.delete(userId);
+                cleared++;
+            }
+            
+            return cleared > 0;
+        } catch (error) {
+            console.error('Error clearing user cooldowns:', error);
+            return false;
         }
-
-        return clearedCount;
-    }
-
-    /**
-     * Clear all cooldowns
-     */
-    clearAllCooldowns() {
-        const totalCleared = this.cooldowns.size + this.globalCooldowns.size;
-        this.cooldowns.clear();
-        this.globalCooldowns.clear();
-        return totalCleared;
-    }
-
-    /**
-     * Get remaining cooldown time with formatted string
-     * @param {string} commandName - The name of the command
-     * @param {string} userId - The user's ID
-     * @param {string} guildId - The guild's ID (optional)
-     * @returns {Object|null} - Object with ms, seconds, and formatted string, or null
-     */
-    getCooldownInfo(commandName, userId, guildId = null) {
-        const cooldownMs = this.checkCooldown(commandName, userId, guildId);
-        if (!cooldownMs) return null;
-
-        const seconds = Math.ceil(cooldownMs / 1000);
-        const formatted = this.formatTime(seconds);
-
-        return {
-            ms: cooldownMs,
-            seconds,
-            formatted
-        };
     }
 
     /**
      * Get all active cooldowns for a user
-     * @param {string} userId - The user's ID
+     * @param {string} userId - User ID
      * @returns {Array} - Array of active cooldowns
      */
     getUserCooldowns(userId) {
-        if (!userId) return [];
-
-        const userCooldowns = [];
-
-        // Check global cooldown
-        const globalCooldown = this.checkGlobalCooldown(userId);
-        if (globalCooldown) {
-            userCooldowns.push({
-                command: 'GLOBAL',
-                remaining: globalCooldown,
-                remainingSeconds: Math.ceil(globalCooldown / 1000),
-                formatted: this.formatTime(Math.ceil(globalCooldown / 1000))
-            });
-        }
-
-        // Check command cooldowns
-        this.cooldowns.forEach((timestamps, key) => {
-            if (timestamps.has(userId)) {
-                const cooldownEnd = timestamps.get(userId);
-                const now = Date.now();
-                
-                if (now < cooldownEnd) {
-                    const remaining = cooldownEnd - now;
-                    const [commandName, guildId] = this.parseKey(key);
-                    
-                    userCooldowns.push({
+        const activeCooldowns = [];
+        const now = Date.now();
+        
+        try {
+            for (const [commandName, timestamps] of this.cooldowns.entries()) {
+                if (timestamps.has(userId)) {
+                    const startTime = timestamps.get(userId);
+                    activeCooldowns.push({
                         command: commandName,
-                        guildId,
-                        remaining,
-                        remainingSeconds: Math.ceil(remaining / 1000),
-                        formatted: this.formatTime(Math.ceil(remaining / 1000))
+                        startTime,
+                        userId
                     });
                 }
             }
-        });
-
-        return userCooldowns;
+            
+            return activeCooldowns;
+        } catch (error) {
+            console.error('Error getting user cooldowns:', error);
+            return [];
+        }
     }
 
     /**
-     * Get statistics about cooldowns
-     * @returns {Object} - Statistics object
+     * Get cooldown statistics
+     * @returns {Object} - Cooldown statistics
      */
     getStats() {
-        let totalActiveCooldowns = 0;
-        let totalCommands = this.cooldowns.size;
-
-        this.cooldowns.forEach(timestamps => {
-            totalActiveCooldowns += timestamps.size;
-        });
-
-        return {
-            totalCommands,
-            totalActiveCooldowns,
-            globalCooldowns: this.globalCooldowns.size,
-            memoryUsage: this.getMemoryUsage()
-        };
-    }
-
-    /**
-     * Estimate memory usage
-     * @returns {Object} - Memory usage estimation
-     */
-    getMemoryUsage() {
-        let estimatedBytes = 0;
+        let totalCooldowns = 0;
+        let activeCooldowns = 0;
+        const now = Date.now();
         
-        this.cooldowns.forEach((timestamps, key) => {
-            estimatedBytes += key.length * 2; // Key string
-            estimatedBytes += timestamps.size * 32; // Approximate size per entry
-        });
-
-        estimatedBytes += this.globalCooldowns.size * 32;
-
+        for (const [commandName, timestamps] of this.cooldowns.entries()) {
+            totalCooldowns += timestamps.size;
+            
+            for (const [userId, timestamp] of timestamps.entries()) {
+                if (now - timestamp < 300000) { // Active within last 5 minutes
+                    activeCooldowns++;
+                }
+            }
+        }
+        
         return {
-            bytes: estimatedBytes,
-            kb: Math.round(estimatedBytes / 1024 * 100) / 100,
-            mb: Math.round(estimatedBytes / (1024 * 1024) * 100) / 100
+            totalCommands: this.cooldowns.size,
+            totalCooldowns,
+            activeCooldowns,
+            globalCooldowns: this.globalCooldowns.size,
+            userCooldowns: this.userCooldowns.size
         };
     }
 
     /**
-     * Generate a unique key for command cooldowns
-     * @param {string} commandName - The command name
-     * @param {string} guildId - The guild ID (optional)
-     * @returns {string} - The generated key
-     */
-    generateKey(commandName, guildId = null) {
-        return guildId ? `${commandName}:${guildId}` : commandName;
-    }
-
-    /**
-     * Parse a key back into command name and guild ID
-     * @param {string} key - The key to parse
-     * @returns {Array} - [commandName, guildId]
-     */
-    parseKey(key) {
-        const parts = key.split(':');
-        return parts.length > 1 ? [parts[0], parts[1]] : [parts[0], null];
-    }
-
-    /**
-     * Format time in a human-readable way
-     * @param {number} seconds - Seconds to format
+     * Format time remaining in a human-readable format
+     * @param {number} seconds - Seconds remaining
      * @returns {string} - Formatted time string
      */
-    formatTime(seconds) {
+    formatTimeRemaining(seconds) {
         if (seconds < 60) {
-            return `${seconds}s`;
+            return `${seconds} second${seconds !== 1 ? 's' : ''}`;
         }
         
         const minutes = Math.floor(seconds / 60);
         const remainingSeconds = seconds % 60;
         
         if (minutes < 60) {
-            return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
+            return remainingSeconds > 0 
+                ? `${minutes}m ${remainingSeconds}s` 
+                : `${minutes} minute${minutes !== 1 ? 's' : ''}`;
         }
         
         const hours = Math.floor(minutes / 60);
         const remainingMinutes = minutes % 60;
         
-        if (remainingMinutes > 0) {
-            return `${hours}h ${remainingMinutes}m`;
-        }
+        return `${hours}h ${remainingMinutes}m`;
+    }
+
+    /**
+     * Clean up expired cooldowns
+     */
+    cleanup() {
+        const now = Date.now();
+        let cleanedCount = 0;
         
-        return `${hours}h`;
-    }
-
-    /**
-     * Clean up expired cooldowns for a specific command
-     * @param {string} key - The command key
-     */
-    cleanupExpiredCooldowns(key) {
-        const timestamps = this.cooldowns.get(key);
-        if (!timestamps) return 0;
-
-        const now = Date.now();
-        let cleaned = 0;
-
-        timestamps.forEach((expireTime, userId) => {
-            if (now >= expireTime) {
-                timestamps.delete(userId);
-                cleaned++;
-            }
-        });
-
-        return cleaned;
-    }
-
-    /**
-     * Clean up all expired cooldowns
-     * @returns {number} - Number of cooldowns cleaned
-     */
-    cleanupAllExpired() {
-        let totalCleaned = 0;
-        const now = Date.now();
-
-        // Clean regular cooldowns
-        this.cooldowns.forEach((timestamps, key) => {
-            const sizeBefore = timestamps.size;
-            timestamps.forEach((expireTime, userId) => {
-                if (now >= expireTime) {
-                    timestamps.delete(userId);
+        try {
+            // Clean command cooldowns
+            for (const [commandName, timestamps] of this.cooldowns.entries()) {
+                const toDelete = [];
+                
+                for (const [userId, timestamp] of timestamps.entries()) {
+                    // Remove cooldowns older than 1 hour
+                    if (now - timestamp > 3600000) {
+                        toDelete.push(userId);
+                    }
                 }
-            });
-            
-            // If collection is empty, remove it entirely
-            if (timestamps.size === 0) {
-                this.cooldowns.delete(key);
+                
+                for (const userId of toDelete) {
+                    timestamps.delete(userId);
+                    cleanedCount++;
+                }
+                
+                // Remove empty command collections
+                if (timestamps.size === 0) {
+                    this.cooldowns.delete(commandName);
+                }
             }
             
-            totalCleaned += sizeBefore - timestamps.size;
-        });
-
-        // Clean global cooldowns
-        this.globalCooldowns.forEach((expireTime, userId) => {
-            if (now >= expireTime) {
-                this.globalCooldowns.delete(userId);
-                totalCleaned++;
+            // Clean global cooldowns
+            for (const [key, timestamp] of this.globalCooldowns.entries()) {
+                if (now - timestamp > 3600000) {
+                    this.globalCooldowns.delete(key);
+                    cleanedCount++;
+                }
             }
-        });
-
-        return totalCleaned;
-    }
-
-    /**
-     * Start automatic cleanup of expired cooldowns
-     */
-    startAutoCleanup() {
-        if (this.cleanupTimer) {
-            clearInterval(this.cleanupTimer);
-        }
-
-        this.cleanupTimer = setInterval(() => {
-            const cleaned = this.cleanupAllExpired();
-            if (cleaned > 0) {
-                console.log(`[CooldownManager] Cleaned up ${cleaned} expired cooldowns`);
+            
+            // Clean user cooldowns
+            for (const [userId, timestamp] of this.userCooldowns.entries()) {
+                if (now - timestamp > 3600000) {
+                    this.userCooldowns.delete(userId);
+                    cleanedCount++;
+                }
             }
-        }, this.options.cleanupInterval);
-
-        // Don't keep the process alive just for cleanup
-        if (this.cleanupTimer.unref) {
-            this.cleanupTimer.unref();
+            
+            if (cleanedCount > 0) {
+                console.log(`Cleaned up ${cleanedCount} expired cooldowns`);
+            }
+            
+        } catch (error) {
+            console.error('Error during cooldown cleanup:', error);
         }
     }
 
     /**
-     * Stop automatic cleanup
-     */
-    stopAutoCleanup() {
-        if (this.cleanupTimer) {
-            clearInterval(this.cleanupTimer);
-            this.cleanupTimer = null;
-        }
-    }
-
-    /**
-     * Destroy the cooldown manager and clean up resources
+     * Destroy cooldown manager and clean up resources
      */
     destroy() {
-        this.stopAutoCleanup();
-        this.clearAllCooldowns();
+        if (this.cleanupInterval) {
+            clearInterval(this.cleanupInterval);
+        }
+        
+        this.cooldowns.clear();
+        this.globalCooldowns.clear();
+        this.userCooldowns.clear();
     }
 }
 
 // Create singleton instance
 const cooldownManager = new CooldownManager();
 
-// Export both the class and singleton instance
+// Graceful shutdown
+process.on('SIGINT', () => {
+    cooldownManager.destroy();
+});
+
+process.on('SIGTERM', () => {
+    cooldownManager.destroy();
+});
+
 module.exports = {
     CooldownManager,
     cooldownManager,
-    // For backward compatibility
-    default: cooldownManager
+    
+    // Legacy exports for backward compatibility
+    checkCooldown: cooldownManager.checkCooldown.bind(cooldownManager),
+    setCooldown: cooldownManager.setCooldown.bind(cooldownManager),
+    removeCooldown: cooldownManager.removeCooldown.bind(cooldownManager),
+    clearUserCooldowns: cooldownManager.clearUserCooldowns.bind(cooldownManager),
+    getUserCooldowns: cooldownManager.getUserCooldowns.bind(cooldownManager),
+    getStats: cooldownManager.getStats.bind(cooldownManager)
 };

@@ -1,3 +1,4 @@
+
 const { EmbedBuilder } = require('discord.js');
 
 class ErrorHandler {
@@ -275,10 +276,6 @@ class ErrorHandler {
         };
 
         console.error(`[${timestamp}] Error in ${context}:`, errorInfo);
-
-        // You can extend this to log to external services
-        // Example: Send to logging service, database, or file
-        // await this.sendToLoggingService(errorInfo);
     }
 
     static createCustomError(type, message, additionalData = {}) {
